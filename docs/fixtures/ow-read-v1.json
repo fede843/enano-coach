@@ -1,0 +1,676 @@
+{
+  "schema_version": "ow-read-v1",
+  "synthetic": true,
+  "fixture_scope": "public-read-contract",
+  "subject": {
+    "user_id": "user-demo-01",
+    "timezone": "UTC"
+  },
+  "safety": {
+    "contains_real_data": false,
+    "contains_private_identifiers": false,
+    "contains_secrets": false,
+    "contains_geodata": false
+  },
+  "notes": [
+    "Todos los valores, nombres e identificadores son sintéticos.",
+    "Los run_id de OW usan el namespace ow-run-demo-*; run_id de OW y runKey del BFF siguen siendo campos distintos y el primero es solo server-side.",
+    "El fixture representa respuestas server-side de lectura y no autoriza a consultar ningún usuario.",
+    "No incluye detalle extendido de workout ni datos geográficos.",
+    "La proyección pública de sync es responsabilidad del BFF y no afirma que OW ya sanitice sus respuestas."
+  ],
+  "public_sync_projection": {
+    "owner": "bff",
+    "classification": "BFF_sanitized",
+    "implementation_status": "pending",
+    "allowlisted_fields": [
+      "state",
+      "progress",
+      "items_processed",
+      "items_total",
+      "warning_codes",
+      "counts"
+    ],
+    "upstream_payload": "raw_not_public"
+  },
+  "source_demo": {
+    "provider": "provider-demo",
+    "source": "source-demo-a",
+    "device": "device-demo-a",
+    "device_type": "watch",
+    "device_name": "Dispositivo sintético A"
+  },
+  "responses": {
+    "data_sources": {
+      "items": [
+        {
+          "id": "source-record-demo-01",
+          "user_id": "user-demo-01",
+          "provider": "provider-demo",
+          "user_connection_id": null,
+          "device_model": "Modelo sintético A",
+          "software_version": "fixture-v1",
+          "source": "source-demo-a",
+          "device_type": "watch",
+          "original_source_name": "Fuente sintética A",
+          "display_name": "Fuente sintética A"
+        }
+      ],
+      "total": 1
+    },
+    "coverage": {
+      "providers": ["provider-demo"],
+      "timeseries": [
+        {
+          "name": "Activity - Basic",
+          "metrics": [
+            {
+              "code": "steps",
+              "unit": "count",
+              "providers": ["provider-demo"]
+            }
+          ]
+        },
+        {
+          "name": "Heart - Basic",
+          "metrics": [
+            {
+              "code": "heart_rate",
+              "unit": "bpm",
+              "providers": ["provider-demo"]
+            }
+          ]
+        }
+      ],
+      "workout_fields": [
+        {
+          "code": "distance",
+          "providers": ["provider-demo"]
+        }
+      ],
+      "sleep_fields": [
+        {
+          "code": "sleep_stages",
+          "providers": ["provider-demo"]
+        }
+      ],
+      "health_scores": [
+        {
+          "code": "recovery",
+          "providers": ["provider-demo"]
+        }
+      ]
+    },
+    "timeseries_match": {
+      "data": [
+        {
+          "timestamp": "2024-01-02T08:00:00Z",
+          "zone_offset": "+00:00",
+          "type": "steps",
+          "value": 8123,
+          "unit": "count",
+          "source": {
+            "provider": "provider-demo",
+            "source": "source-demo-a",
+            "device": "device-demo-a",
+            "device_type": "watch"
+          },
+          "is_daily_total": true
+        },
+        {
+          "timestamp": "2024-01-02T08:00:00Z",
+          "zone_offset": "+00:00",
+          "type": "heart_rate",
+          "value": 72,
+          "unit": "bpm",
+          "source": {
+            "provider": "provider-demo",
+            "source": "source-demo-a",
+            "device": "device-demo-a",
+            "device_type": "watch"
+          },
+          "is_daily_total": false
+        }
+      ],
+      "pagination": {
+        "next_cursor": null,
+        "previous_cursor": null,
+        "has_more": false,
+        "total_count": null
+      }
+    },
+    "timeseries_value_null": {
+      "data": [
+        {
+          "timestamp": "2024-01-02T09:00:00Z",
+          "zone_offset": "+00:00",
+          "type": "oxygen_saturation",
+          "value": null,
+          "unit": "percent",
+          "source": {
+            "provider": "provider-demo",
+            "source": "source-demo-a",
+            "device_type": "watch"
+          },
+          "is_daily_total": false
+        }
+      ],
+      "pagination": {
+        "next_cursor": null,
+        "previous_cursor": null,
+        "has_more": false,
+        "total_count": 1
+      }
+    },
+    "timeseries_is_daily_total_null": {
+      "data": [
+        {
+          "timestamp": "2024-01-02T09:05:00Z",
+          "zone_offset": "+00:00",
+          "type": "distance_walking",
+          "value": 1200,
+          "unit": "meters",
+          "source": {
+            "provider": "provider-demo",
+            "source": "source-demo-a",
+            "device_type": "watch"
+          },
+          "is_daily_total": null
+        }
+      ],
+      "pagination": {
+        "next_cursor": null,
+        "previous_cursor": null,
+        "has_more": false,
+        "total_count": 1
+      }
+    },
+    "activity_summary": {
+      "data": [
+        {
+          "date": "2024-01-02",
+          "source": {
+            "provider": "provider-demo",
+            "source": "source-demo-a",
+            "device": "device-demo-a",
+            "device_type": "watch"
+          },
+          "steps": 8123,
+          "distance_meters": 5300,
+          "floors_climbed": 4,
+          "elevation_meters": 18,
+          "active_calories_kcal": 0,
+          "total_calories_kcal": 1680,
+          "active_minutes": 35,
+          "sedentary_minutes": null,
+          "intensity_minutes": {
+            "light": 20,
+            "moderate": 10,
+            "vigorous": 5
+          },
+          "heart_rate": {
+            "avg_bpm": 72,
+            "max_bpm": 141,
+            "min_bpm": 51
+          }
+        }
+      ],
+      "pagination": {
+        "next_cursor": null,
+        "previous_cursor": null,
+        "has_more": false,
+        "total_count": null
+      }
+    },
+    "sleep_summary": {
+      "data": [
+        {
+          "date": "2024-01-02",
+          "source": {
+            "provider": "provider-demo",
+            "source": "source-demo-a",
+            "device": "device-demo-a",
+            "device_type": "watch"
+          },
+          "start_time": "2024-01-01T22:30:00Z",
+          "end_time": "2024-01-02T06:30:00Z",
+          "duration_minutes": 420,
+          "total_duration_minutes": 420,
+          "time_in_bed_minutes": 480,
+          "efficiency_percent": 87.5,
+          "stages": {
+            "awake_minutes": 45,
+            "light_minutes": 260,
+            "deep_minutes": 100,
+            "rem_minutes": 60
+          },
+          "sessions": null,
+          "nap_count": 0,
+          "nap_duration_minutes": 0,
+          "avg_heart_rate_bpm": 60,
+          "avg_hrv_sdnn_ms": null,
+          "avg_hrv_rmssd_ms": null,
+          "avg_respiratory_rate": null,
+          "avg_spo2_percent": null
+        }
+      ],
+      "pagination": {
+        "next_cursor": null,
+        "previous_cursor": null,
+        "has_more": false,
+        "total_count": null
+      }
+    },
+    "events_sleep": {
+      "data": [
+        {
+          "id": "sleep-event-demo-01",
+          "date": "2024-01-02",
+          "start_time": "2024-01-01T22:30:00Z",
+          "end_time": "2024-01-02T06:30:00Z",
+          "duration_seconds": 28800,
+          "sleep_duration_seconds": 25200,
+          "is_nap": false,
+          "source": {
+            "provider": "provider-demo",
+            "source": "source-demo-a",
+            "device_type": "watch"
+          },
+          "sleep_stage_intervals": [
+            {
+              "start_time": "2024-01-01T22:30:00Z",
+              "end_time": "2024-01-01T22:45:00Z",
+              "stage": "in_bed"
+            },
+            {
+              "start_time": "2024-01-01T22:45:00Z",
+              "end_time": "2024-01-02T05:45:00Z",
+              "stage": "sleeping"
+            },
+            {
+              "start_time": "2024-01-02T05:45:00Z",
+              "end_time": "2024-01-02T06:30:00Z",
+              "stage": "awake"
+            }
+          ]
+        }
+      ],
+      "pagination": {
+        "next_cursor": null,
+        "previous_cursor": null,
+        "has_more": false,
+        "total_count": 1
+      }
+    },
+    "recovery_summary": {
+      "data": [
+        {
+          "date": "2024-01-02",
+          "source": {
+            "provider": "provider-demo",
+            "source": "source-demo-a",
+            "device": "device-demo-a",
+            "device_type": "watch"
+          },
+          "sleep_duration_seconds": null,
+          "sleep_efficiency_percent": null,
+          "resting_heart_rate_bpm": 55,
+          "avg_hrv_sdnn_ms": null,
+          "avg_spo2_percent": null,
+          "recovery_score": 82
+        }
+      ],
+      "pagination": {
+        "next_cursor": null,
+        "previous_cursor": null,
+        "has_more": false,
+        "total_count": null
+      }
+    },
+    "summaries_data": {
+      "total_data_points": 3,
+      "total_workouts": 1,
+      "total_sleep_events": 1,
+      "series_type_counts": {
+        "steps": 1,
+        "heart_rate": 1,
+        "oxygen_saturation": 1
+      },
+      "workout_type_counts": {
+        "running": 1
+      },
+      "by_provider": {
+        "provider-demo": {
+          "data_points": 3,
+          "workout_count": 1,
+          "sleep_count": 1
+        }
+      },
+      "data_points": 3,
+      "series_counts": {
+        "steps": 1,
+        "heart_rate": 1,
+        "oxygen_saturation": 1
+      },
+      "workout_count": 1,
+      "sleep_count": 1,
+      "has_womens_health_data": false
+    },
+    "body_summary_relative_now": {
+      "request": {
+        "average_period": 7,
+        "latest_window_hours": 4
+      },
+      "slow_changing": {
+        "weight_kg": 70.2,
+        "height_cm": 175,
+        "body_fat_percent": null,
+        "muscle_mass_kg": null,
+        "bmi": 22.9,
+        "age": null
+      },
+      "averaged": {
+        "period_days": 7,
+        "resting_heart_rate_bpm": 55,
+        "avg_hrv_sdnn_ms": null,
+        "avg_hrv_rmssd_ms": null,
+        "period_start": "2023-12-27T12:00:00Z",
+        "period_end": "2024-01-03T12:00:00Z"
+      },
+      "latest": {
+        "body_temperature_celsius": null,
+        "body_temperature_measured_at": null,
+        "skin_temperature_celsius": null,
+        "skin_temperature_measured_at": null,
+        "blood_pressure": null,
+        "blood_pressure_measured_at": null
+      }
+    },
+    "workouts_aggregate": {
+      "data": [
+        {
+          "id": "workout-demo-01",
+          "type": "running",
+          "name": null,
+          "start_time": "2024-01-02T08:00:00Z",
+          "end_time": "2024-01-02T08:30:00Z",
+          "duration_seconds": 1800,
+          "zone_offset": "+00:00",
+          "source": {
+            "provider": "provider-demo",
+            "source": "source-demo-a",
+            "device": "device-demo-a",
+            "device_type": "watch"
+          },
+          "calories_kcal": 210,
+          "distance_meters": 3100,
+          "avg_heart_rate_bpm": 132,
+          "max_heart_rate_bpm": 158,
+          "avg_pace_sec_per_km": 581,
+          "elevation_gain_meters": 4
+        }
+      ],
+      "pagination": {
+        "next_cursor": null,
+        "previous_cursor": null,
+        "has_more": false,
+        "total_count": 1
+      }
+    },
+    "sync_runs_terminal": [
+      {
+        "run_id": "ow-run-demo-01",
+        "user_id": "user-demo-01",
+        "provider": "provider-demo",
+        "source": "sdk-demo",
+        "state": "completed",
+        "progress": 1,
+        "items_processed": 8,
+        "items_total": 8,
+        "warning_codes": [],
+        "counts": {
+          "records_saved": 8,
+          "records_rejected": 0
+        },
+        "started_at": "2024-01-02T08:31:00Z",
+        "ended_at": "2024-01-02T08:31:04Z",
+        "last_update": "2024-01-02T08:31:04Z"
+      }
+    ],
+    "sync_recent": [
+      {
+        "event_id": "sync-event-demo-01",
+        "run_id": "ow-run-demo-01",
+        "user_id": "user-demo-01",
+        "provider": "provider-demo",
+        "source": "sdk-demo",
+        "state": "completed",
+        "progress": 1,
+        "items_processed": 8,
+        "items_total": 8,
+        "warning_codes": [],
+        "counts": {
+          "records_saved": 8,
+          "records_rejected": 0
+        },
+        "started_at": "2024-01-02T08:31:00Z",
+        "ended_at": "2024-01-02T08:31:04Z",
+        "timestamp": "2024-01-02T08:31:04Z"
+      }
+    ],
+    "sync_stream": {
+      "content_type": "text/event-stream",
+      "replay": 2,
+      "frames": [
+        {
+          "comment": "connected"
+        },
+        {
+          "event": "sync.status",
+          "data": {
+            "run_id": "ow-run-demo-02",
+            "state": "pending",
+            "progress": 0.5,
+            "warning_codes": [],
+            "timestamp": "2024-01-05T08:00:02Z"
+          }
+        },
+        {
+          "event": "sync.status",
+          "data": {
+            "run_id": "ow-run-demo-02",
+            "state": "partial",
+            "progress": 1,
+            "warning_codes": ["PARTIAL_COVERAGE"],
+            "timestamp": "2024-01-05T08:00:04Z"
+          }
+        },
+        {
+          "comment": "heartbeat"
+        }
+      ]
+    }
+  },
+  "cases": {
+    "match": {
+      "run_id": "ow-run-demo-01",
+      "expected": {
+        "type": "steps",
+        "value": 8123,
+        "unit": "count",
+        "is_daily_total": true
+      },
+      "observed_ref": "responses.timeseries_match.data[0]",
+      "expected_result": "match"
+    },
+    "summaries_data": {
+      "observed_ref": "responses.summaries_data",
+      "expected_result": "aggregate_inventory_without_pagination"
+    },
+    "events_sleep": {
+      "observed_ref": "responses.events_sleep.data[0]",
+      "expected_result": "sleep_event_with_generic_stage"
+    },
+    "sync_stream": {
+      "observed_ref": "responses.sync_stream",
+      "expected_result": "sse_frames_not_pagination"
+    },
+    "value_null": {
+      "observed_ref": "responses.timeseries_value_null.data[0]",
+      "expected_result": "null_not_zero"
+    },
+    "is_daily_total_null": {
+      "observed_ref": "responses.timeseries_is_daily_total_null.data[0]",
+      "expected_result": "unknown_daily_total_semantics"
+    },
+    "empty": {
+      "response": {
+        "data": [],
+        "pagination": {
+          "next_cursor": null,
+          "previous_cursor": null,
+          "has_more": false,
+          "total_count": null
+        }
+      },
+      "expected_result": "empty_not_zero"
+    },
+    "zero": {
+      "response": {
+        "data": [
+          {
+            "timestamp": "2024-01-04T08:00:00Z",
+            "zone_offset": "+00:00",
+            "type": "steps",
+            "value": 0,
+            "unit": "count",
+            "source": {
+              "provider": "provider-demo",
+              "source": "source-demo-a",
+              "device_type": "watch"
+            },
+            "is_daily_total": true
+          }
+        ],
+        "pagination": {
+          "next_cursor": null,
+          "previous_cursor": null,
+          "has_more": false,
+          "total_count": 1
+        }
+      },
+      "expected_result": "zero"
+    },
+    "null": {
+      "response": {
+        "body_summary": null,
+        "recovery": {
+          "recovery_score": null,
+          "resting_heart_rate_bpm": null
+        }
+      },
+      "expected_result": "null_not_zero"
+    },
+    "partial": {
+      "response": {
+        "data": [
+          {
+            "date": "2024-01-05",
+            "source": {
+              "provider": "provider-demo",
+              "source": "source-demo-a",
+              "device_type": "watch"
+            },
+            "steps": 1200,
+            "distance_meters": null
+          }
+        ],
+        "pagination": {
+          "next_cursor": "ow-cursor-demo-02",
+          "previous_cursor": null,
+          "has_more": true,
+          "total_count": null
+        }
+      },
+      "expected_result": "partial_until_next_page"
+    },
+    "unsupported": {
+      "requested_capability": "extended_workout_detail",
+      "public_read_available": false,
+      "expected_result": "unsupported"
+    },
+    "source_ready": {
+      "candidate_sources": [
+        {
+          "provider": "provider-demo",
+          "source": "source-demo-a",
+          "device_type": "watch"
+        }
+      ],
+      "priority_declared": true,
+      "expected_result": "ready"
+    },
+    "source_ambiguous": {
+      "candidate_sources": [
+        {
+          "provider": "provider-demo",
+          "source": "source-demo-a",
+          "device_type": "watch"
+        },
+        {
+          "provider": "provider-demo",
+          "source": "source-demo-b",
+          "device_type": "watch"
+        }
+      ],
+      "priority_declared": false,
+      "expected_result": "source_ambiguous"
+    },
+    "pending": {
+      "response": [
+        {
+          "run_id": "ow-run-demo-02",
+          "user_id": "user-demo-01",
+          "provider": "provider-demo",
+          "source": "sdk-demo",
+          "state": "pending",
+          "progress": null,
+          "items_processed": null,
+          "items_total": null,
+          "warning_codes": [],
+          "counts": {
+            "records_saved": null,
+            "records_rejected": null
+          },
+          "started_at": "2024-01-05T08:00:00Z",
+          "ended_at": null,
+          "last_update": "2024-01-05T08:00:02Z"
+        }
+      ],
+      "expected_result": "pending"
+    },
+    "inconclusive": {
+      "observed": {
+        "state": "inconclusive",
+        "reason_code": "INCONSISTENT_TERMINAL_SIGNALS"
+      },
+      "expected_result": "inconclusive"
+    },
+    "mismatch": {
+      "expected": {
+        "type": "steps",
+        "value": 8123,
+        "unit": "count",
+        "is_daily_total": true
+      },
+      "observed": {
+        "type": "steps",
+        "value": 8124,
+        "unit": "count",
+        "is_daily_total": true
+      },
+      "expected_result": "mismatch",
+      "expected_run_state": "completed_with_findings"
+    }
+  }
+}

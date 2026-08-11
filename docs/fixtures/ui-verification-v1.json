@@ -1,0 +1,1025 @@
+{
+  "schemaVersion": "1",
+  "synthetic": true,
+  "fixtureScope": "bff-ui-v1",
+  "safety": {
+    "containsRealData": false,
+    "containsPrivateIdentifiers": false,
+    "containsSecrets": false,
+    "containsGeodata": false
+  },
+  "notes": [
+    "Todas las respuestas son sintéticas y están pensadas para un adapter local.",
+    "Los runKey sintéticos usan el namespace verify-demo-* y no representan cuentas reales; los run_id OW relacionados usan el namespace separado ow-run-demo-*.",
+    "adapterMappings es metadata server-side del fixture y no forma parte de las respuestas que recibe el navegador.",
+    "Las respuestas no incluyen mapas, rutas, datos raw ni identificadores internos de OW; adapterMappings sólo contiene referencias OW sintéticas para el adapter.",
+    "Los campos message y error de este fixture son copy/codigos BFF_sanitized allowlisted; no son payloads raw de OW."
+  ],
+  "adapterMappings": {
+    "verificationRuns": [
+      {
+        "runKey": "verify-demo-01",
+        "owRunId": "ow-run-demo-01",
+        "owStage": "completed",
+        "owStatus": "success"
+      },
+      {
+        "runKey": "verify-demo-02",
+        "owRunId": "ow-run-demo-02",
+        "owStage": "completed",
+        "owStatus": "partial"
+      }
+    ]
+  },
+  "responses": {
+    "session_active": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:30:00Z",
+      "timezone": "UTC",
+      "data": {
+        "authenticated": true,
+        "accessState": "active",
+        "canReadVerification": true
+      },
+      "coverage": {},
+      "warnings": [],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "session_active"
+        }
+      }
+    },
+    "overview_mixed": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:30:00Z",
+      "timezone": "UTC",
+      "data": {
+        "logicalDate": "2024-01-02",
+        "summary": {
+          "steps": {
+            "state": "value",
+            "value": 8123,
+            "unit": "count",
+            "isDailyTotal": true,
+            "sourceKey": "source-demo-a"
+          },
+          "distanceMeters": {
+            "state": "partial",
+            "value": 5300,
+            "unit": "meters",
+            "isDailyTotal": true,
+            "coverage": {
+              "expectedDays": 1,
+              "availableDays": 1,
+              "observedFraction": 0.5
+            }
+          },
+          "activeCaloriesKcal": {
+            "state": "zero",
+            "value": 0,
+            "unit": "kcal",
+            "isDailyTotal": true
+          },
+          "sleepDurationSeconds": {
+            "state": "value",
+            "value": 25200,
+            "unit": "seconds",
+            "isDailyTotal": false
+          },
+          "recoveryScore": {
+            "state": "null",
+            "value": null,
+            "unit": null,
+            "isDailyTotal": false
+          },
+          "stress": {
+            "state": "unsupported",
+            "value": null,
+            "unit": null,
+            "isDailyTotal": null
+          },
+          "heartRate": {
+            "state": "source_ambiguous",
+            "value": 72,
+            "unit": "bpm",
+            "isDailyTotal": false
+          }
+        }
+      },
+      "coverage": {
+        "requested": {
+          "logicalDate": "2024-01-02",
+          "from": "2024-01-02T00:00:00Z",
+          "to": "2024-01-03T00:00:00Z",
+          "timezone": "UTC"
+        },
+        "expectedDays": 1,
+        "availableDays": 1,
+        "isPartial": true,
+        "byDomain": {
+          "activity": {
+            "expectedDays": 1,
+            "availableDays": 1,
+            "state": "complete"
+          },
+          "sleep": {
+            "expectedDays": 1,
+            "availableDays": 1,
+            "state": "complete"
+          },
+          "body": {
+            "expectedDays": null,
+            "availableDays": null,
+            "state": "relative_to_now"
+          }
+        }
+      },
+      "warnings": [
+        {
+          "code": "PARTIAL_COVERAGE",
+          "severity": "warning",
+          "message": "La distancia solo cubre parte de la ventana.",
+          "domain": "activity"
+        },
+        {
+          "code": "SOURCE_AMBIGUOUS",
+          "severity": "warning",
+          "message": "No hay una fuente única para frecuencia cardíaca.",
+          "domain": "heart_rate"
+        },
+        {
+          "code": "BODY_RELATIVE_TO_NOW",
+          "severity": "info",
+          "message": "Body es relativo al momento de consulta.",
+          "domain": "body"
+        }
+      ],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "overview_mixed"
+        },
+        "capabilities": {
+          "gps": "not_verifiable",
+          "workoutDetails": "aggregate_only"
+        }
+      }
+    },
+    "overview_empty": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-04T12:30:00Z",
+      "timezone": "UTC",
+      "data": {
+        "logicalDate": "2024-01-04",
+        "summary": {},
+        "sources": []
+      },
+      "coverage": {
+        "requested": {
+          "logicalDate": "2024-01-04",
+          "from": "2024-01-04T00:00:00Z",
+          "to": "2024-01-05T00:00:00Z",
+          "timezone": "UTC"
+        },
+        "expectedDays": 1,
+        "availableDays": 0,
+        "isPartial": false,
+        "byDomain": {}
+      },
+      "warnings": [],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "overview_empty"
+        }
+      }
+    },
+    "overview_error": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:34:00Z",
+      "timezone": "UTC",
+      "data": null,
+      "coverage": {},
+      "warnings": [],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "overview_error"
+        }
+      },
+      "error": {
+        "code": "UPSTREAM_TIMEOUT",
+        "message": "No se pudo completar la consulta del resumen.",
+        "requestId": "req-demo-overview-504",
+        "retryable": true,
+        "field": null
+      }
+    },
+    "settings_capabilities": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:34:00Z",
+      "timezone": "UTC",
+      "data": {
+        "contract": "bff-ui-v1",
+        "versions": {
+          "bffSchema": "1",
+          "owReference": "not_pinned"
+        },
+        "capabilities": {
+          "gps": "not_verifiable",
+          "workoutDetails": "aggregate_only",
+          "segments": "not_verifiable",
+          "hrZones": "not_verifiable"
+        },
+        "technicalState": "ready"
+      },
+      "coverage": {},
+      "warnings": [],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "settings_capabilities"
+        }
+      }
+    },
+    "source_ready": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:30:00Z",
+      "timezone": "UTC",
+      "data": {
+        "items": [
+          {
+            "sourceKey": "source-demo-a",
+            "label": "Fuente sintética A",
+            "state": "ready",
+            "capabilities": ["activity", "sleep", "heart_rate"],
+            "lastObservedAt": "2024-01-02T10:00:00Z"
+          }
+        ]
+      },
+      "coverage": {},
+      "warnings": [],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "source_ready"
+        }
+      }
+    },
+    "source_ambiguous": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:30:00Z",
+      "timezone": "UTC",
+      "data": {
+        "items": [
+          {
+            "sourceKey": "source-demo-a",
+            "label": "Fuente sintética A",
+            "state": "source_ambiguous",
+            "capabilities": ["activity", "heart_rate"],
+            "lastObservedAt": "2024-01-02T10:00:00Z"
+          },
+          {
+            "sourceKey": "source-demo-b",
+            "label": "Fuente sintética B",
+            "state": "source_ambiguous",
+            "capabilities": ["heart_rate"],
+            "lastObservedAt": "2024-01-02T10:01:00Z"
+          }
+        ]
+      },
+      "coverage": {},
+      "warnings": [
+        {
+          "code": "SOURCE_AMBIGUOUS",
+          "severity": "warning",
+          "message": "La atribución requiere una regla adicional."
+        }
+      ],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "source_ambiguous"
+        }
+      }
+    },
+    "runs_first_page": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:30:00Z",
+      "timezone": "UTC",
+      "data": {
+        "items": [
+          {
+            "runKey": "verify-demo-01",
+            "state": "persisted",
+            "requestedAt": "2024-01-02T08:31:00Z",
+            "startedAt": "2024-01-02T08:31:01Z",
+            "finishedAt": "2024-01-02T08:31:04Z",
+            "counts": {
+              "recordsSeen": 8,
+              "recordsAccepted": 8,
+              "recordsRejected": 0,
+              "recordsDuplicated": 0,
+              "fieldsUnsupported": 0
+            }
+          },
+          {
+            "runKey": "verify-demo-02",
+            "state": "partial",
+            "requestedAt": "2024-01-02T08:00:00Z",
+            "startedAt": "2024-01-02T08:00:01Z",
+            "finishedAt": "2024-01-02T08:00:03Z",
+            "counts": {
+              "recordsSeen": 12,
+              "recordsAccepted": 10,
+              "recordsRejected": 1,
+              "recordsDuplicated": 1,
+              "fieldsUnsupported": 0
+            }
+          },
+          {
+            "runKey": "verify-demo-03",
+            "state": "pending",
+            "requestedAt": "2024-01-02T07:00:00Z",
+            "startedAt": null,
+            "finishedAt": null,
+            "counts": {
+              "recordsSeen": null,
+              "recordsAccepted": null,
+              "recordsRejected": null,
+              "recordsDuplicated": null,
+              "fieldsUnsupported": null
+            }
+          }
+        ],
+        "page": {
+          "nextCursor": "bff-cursor-demo-02",
+          "hasNext": true,
+          "totalCount": null
+        }
+      },
+      "coverage": {},
+      "warnings": [],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "runs_first_page"
+        }
+      }
+    },
+    "runs_second_page": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:30:00Z",
+      "timezone": "UTC",
+      "data": {
+        "items": [
+          {
+            "runKey": "verify-demo-04",
+            "state": "failed",
+            "requestedAt": "2024-01-01T08:00:00Z",
+            "startedAt": "2024-01-01T08:00:01Z",
+            "finishedAt": "2024-01-01T08:00:02Z",
+            "counts": {
+              "recordsSeen": 2,
+              "recordsAccepted": 0,
+              "recordsRejected": 2,
+              "recordsDuplicated": 0,
+              "fieldsUnsupported": null
+            }
+          }
+        ],
+        "page": {
+          "nextCursor": null,
+          "hasNext": false,
+          "totalCount": null
+        }
+      },
+      "coverage": {},
+      "warnings": [],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "runs_second_page"
+        }
+      }
+    },
+    "verification_run_create": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:30:00Z",
+      "timezone": "UTC",
+      "data": {
+        "verificationRun": {
+          "runKey": "verify-demo-05",
+          "state": "pending",
+          "requestedAt": "2024-01-02T12:30:00Z",
+          "startedAt": null,
+          "finishedAt": null,
+          "scope": {
+            "date": "2024-01-02",
+            "timezone": "UTC",
+            "domains": ["activity", "sleep"]
+          },
+          "counts": {
+            "recordsSeen": null,
+            "recordsAccepted": null,
+            "recordsRejected": null,
+            "recordsDuplicated": null,
+            "fieldsUnsupported": null
+          },
+          "warnings": []
+        }
+      },
+      "coverage": {},
+      "warnings": [],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "verification_run_create"
+        }
+      }
+    },
+    "verification_run_partial": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:31:00Z",
+      "timezone": "UTC",
+      "data": {
+        "verificationRun": {
+          "runKey": "verify-demo-02",
+          "state": "partial",
+          "requestedAt": "2024-01-02T08:00:00Z",
+          "startedAt": "2024-01-02T08:00:01Z",
+          "finishedAt": "2024-01-02T08:00:03Z",
+          "scope": {
+            "date": "2024-01-02",
+            "timezone": "UTC",
+            "domains": ["activity"]
+          },
+          "counts": {
+            "recordsSeen": 12,
+            "recordsAccepted": 10,
+            "recordsRejected": 1,
+            "recordsDuplicated": 1,
+            "fieldsUnsupported": 0
+          },
+          "warnings": [
+            {
+              "code": "PARTIAL_COVERAGE",
+              "severity": "warning",
+              "message": "La ventana no se pudo cerrar por completo."
+            }
+          ],
+          "results": [
+            {
+              "metric": "steps",
+              "state": "match"
+            }
+          ]
+        }
+      },
+      "coverage": {
+        "requested": {
+          "logicalDate": "2024-01-02",
+          "from": "2024-01-02T00:00:00Z",
+          "to": "2024-01-03T00:00:00Z",
+          "timezone": "UTC"
+        },
+        "expectedDays": 1,
+        "availableDays": 1,
+        "isPartial": true
+      },
+      "warnings": [],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "verification_run_partial"
+        }
+      }
+    },
+    "verification_not_verifiable": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:32:00Z",
+      "timezone": "UTC",
+      "data": {
+        "verificationRun": {
+          "runKey": "verify-demo-06",
+          "state": "not_verifiable",
+          "requestedAt": "2024-01-02T12:32:00Z",
+          "startedAt": "2024-01-02T12:32:01Z",
+          "finishedAt": "2024-01-02T12:32:02Z",
+          "scope": {
+            "date": "2024-01-02",
+            "timezone": "UTC",
+            "domains": ["workouts"]
+          },
+          "counts": {
+            "recordsSeen": 1,
+            "recordsAccepted": 1,
+            "recordsRejected": 0,
+            "recordsDuplicated": 0,
+            "fieldsUnsupported": 1
+          },
+          "warnings": [
+            {
+              "code": "NOT_VERIFIABLE",
+              "severity": "warning",
+              "message": "La API pública no ofrece el schema necesario para esta afirmación."
+            }
+          ],
+          "results": [
+            {
+              "metric": "extended_workout_detail",
+              "state": "not_verifiable",
+              "reasonCode": "NO_PUBLIC_WORKOUT_DETAIL"
+            }
+          ]
+        }
+      },
+      "coverage": {},
+      "warnings": [
+        {
+          "code": "NOT_VERIFIABLE",
+          "severity": "warning",
+          "message": "La API pública no ofrece el schema necesario para esta afirmación."
+        }
+      ],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "verification_not_verifiable"
+        }
+      }
+    },
+    "verification_run_mismatch": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:33:00Z",
+      "timezone": "UTC",
+      "data": {
+        "verificationRun": {
+          "runKey": "verify-demo-07",
+          "state": "completed_with_findings",
+          "requestedAt": "2024-01-02T12:33:00Z",
+          "startedAt": "2024-01-02T12:33:01Z",
+          "finishedAt": "2024-01-02T12:33:02Z",
+          "scope": {
+            "date": "2024-01-02",
+            "timezone": "UTC",
+            "domains": ["activity"]
+          },
+          "counts": {
+            "recordsSeen": 1,
+            "recordsAccepted": 1,
+            "recordsRejected": 0,
+            "recordsDuplicated": 0,
+            "fieldsUnsupported": 0
+          },
+          "warnings": [
+            {
+              "code": "MISMATCH",
+              "severity": "warning",
+              "message": "El hecho observado no coincide con el esperado."
+            }
+          ],
+          "results": [
+            {
+              "metric": "steps",
+              "state": "mismatch",
+              "expected": 8123,
+              "observed": 8124,
+              "unit": "count",
+              "expectedIsDailyTotal": true,
+              "observedIsDailyTotal": true
+            }
+          ]
+        }
+      },
+      "coverage": {},
+      "warnings": [
+        {
+          "code": "MISMATCH",
+          "severity": "warning",
+          "message": "El hecho observado no coincide con el esperado."
+        }
+      ],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "verification_run_mismatch"
+        }
+      }
+    },
+    "verification_inconclusive": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:35:00Z",
+      "timezone": "UTC",
+      "data": {
+        "verificationRun": {
+          "runKey": "verify-demo-08",
+          "state": "inconclusive",
+          "requestedAt": "2024-01-02T12:35:00Z",
+          "startedAt": "2024-01-02T12:35:01Z",
+          "finishedAt": "2024-01-02T12:35:02Z",
+          "scope": {
+            "date": "2024-01-02",
+            "timezone": "UTC",
+            "domains": ["activity"]
+          },
+          "counts": {
+            "recordsSeen": 1,
+            "recordsAccepted": 1,
+            "recordsRejected": null,
+            "recordsDuplicated": null,
+            "fieldsUnsupported": null
+          },
+          "warnings": [
+            {
+              "code": "INCONCLUSIVE",
+              "severity": "warning",
+              "message": "No se pudo cerrar la comparación porque faltó una página."
+            }
+          ],
+          "results": [
+            {
+              "metric": "steps",
+              "state": "inconclusive",
+              "reasonCode": "CURSOR_EXPIRED"
+            }
+          ]
+        }
+      },
+      "coverage": {},
+      "warnings": [
+        {
+          "code": "INCONCLUSIVE",
+          "severity": "warning",
+          "message": "No se pudo cerrar la comparación porque faltó una página."
+        }
+      ],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "verification_inconclusive"
+        }
+      }
+    },
+    "errors": {
+      "session_required_401": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "auth_401"
+          }
+        },
+        "error": {
+          "code": "SESSION_REQUIRED",
+          "message": "La sesión es necesaria para consultar.",
+          "requestId": "req-demo-401",
+          "retryable": false,
+          "field": null
+        }
+      },
+      "access_pending_403": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "auth_403"
+          }
+        },
+        "error": {
+          "code": "ACCESS_PENDING",
+          "message": "La cuenta todavía no tiene acceso a esta consulta.",
+          "requestId": "req-demo-403",
+          "retryable": false,
+          "field": null
+        }
+      },
+      "run_not_found_404": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "run_not_found_404"
+          }
+        },
+        "error": {
+          "code": "RUN_NOT_FOUND",
+          "message": "No se encontró la verificación solicitada.",
+          "requestId": "req-demo-404",
+          "retryable": false,
+          "field": null
+        }
+      },
+      "upstream_invalid_502": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "upstream_invalid_502"
+          }
+        },
+        "error": {
+          "code": "UPSTREAM_INVALID",
+          "message": "La fuente devolvió una respuesta no válida.",
+          "requestId": "req-demo-502",
+          "retryable": false,
+          "field": null
+        }
+      },
+      "upstream_unavailable_503": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "upstream_unavailable_503"
+          }
+        },
+        "error": {
+          "code": "UPSTREAM_UNAVAILABLE",
+          "message": "La fuente no está disponible; vuelve a consultar manualmente.",
+          "requestId": "req-demo-503",
+          "retryable": true,
+          "field": null
+        }
+      },
+      "upstream_timeout_504": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "upstream_timeout_504"
+          }
+        },
+        "error": {
+          "code": "UPSTREAM_TIMEOUT",
+          "message": "La fuente tardó demasiado en responder.",
+          "requestId": "req-demo-504",
+          "retryable": true,
+          "field": null
+        }
+      },
+      "invalid_query_400": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "validation_400_query"
+          }
+        },
+        "error": {
+          "code": "INVALID_QUERY",
+          "message": "La fecha o zona horaria no es válida.",
+          "requestId": "req-demo-invalid-query",
+          "retryable": false,
+          "field": "date"
+        }
+      },
+      "invalid_cursor_400": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "validation_400_cursor"
+          }
+        },
+        "error": {
+          "code": "INVALID_CURSOR",
+          "message": "El cursor no es válido para este listado.",
+          "requestId": "req-demo-invalid-cursor",
+          "retryable": false,
+          "field": "cursor"
+        }
+      },
+      "invalid_scope_422": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "validation_422_scope"
+          }
+        },
+        "error": {
+          "code": "INVALID_SCOPE",
+          "message": "El alcance de la verificación no es válido.",
+          "requestId": "req-demo-invalid-scope",
+          "retryable": false,
+          "field": "domains"
+        }
+      },
+      "cursor_expired_410": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "cursor_expired_410"
+          }
+        },
+        "error": {
+          "code": "CURSOR_EXPIRED",
+          "message": "La página solicitada expiró; reinicia el listado.",
+          "requestId": "req-demo-410",
+          "retryable": true,
+          "field": "cursor"
+        }
+      },
+      "session_anonymous_401": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "session_anonymous_401"
+          }
+        },
+        "error": {
+          "code": "SESSION_REQUIRED",
+          "message": "La sesión es necesaria para consultar.",
+          "requestId": "req-demo-401-anonymous",
+          "retryable": false,
+          "field": null
+        }
+      },
+      "access_blocked_403": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "access_blocked_403"
+          }
+        },
+        "error": {
+          "code": "ACCESS_BLOCKED",
+          "message": "El acceso a esta consulta está bloqueado.",
+          "requestId": "req-demo-403-blocked",
+          "retryable": false,
+          "field": null
+        }
+      },
+      "idempotency_conflict_409": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "idempotency_conflict_409"
+          }
+        },
+        "error": {
+          "code": "IDEMPOTENCY_CONFLICT",
+          "message": "La solicitud entra en conflicto con una operación existente.",
+          "requestId": "req-demo-409-conflict",
+          "retryable": false,
+          "field": null
+        }
+      },
+      "rate_limited_429": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "rate_limited_429"
+          }
+        },
+        "error": {
+          "code": "RATE_LIMITED",
+          "message": "Se alcanzó el límite de solicitudes.",
+          "requestId": "req-demo-429-rate-limit",
+          "retryable": true,
+          "field": null
+        }
+      },
+      "internal_error_500": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "internal_error_500"
+          }
+        },
+        "error": {
+          "code": "INTERNAL_ERROR",
+          "message": "No se pudo completar la solicitud.",
+          "requestId": "req-demo-500-internal",
+          "retryable": false,
+          "field": null
+        }
+      }
+    }
+  },
+  "adapter_assertions": [
+    {
+      "ow_stage": "queued",
+      "ow_status": "in_progress",
+      "ui_state": "pending"
+    },
+    {
+      "ow_stage": "completed",
+      "ow_status": "success",
+      "ui_state": "persisted"
+    },
+    {
+      "ow_stage": "completed",
+      "ow_status": "in_progress",
+      "ui_state": "inconclusive"
+    },
+    {
+      "ow_stage": "completed",
+      "ow_status": "partial",
+      "ui_state": "partial"
+    },
+    {
+      "ow_stage": "failed",
+      "ow_status": "failed",
+      "ui_state": "failed"
+    },
+    {
+      "ow_stage": "cancelled",
+      "ow_status": "cancelled",
+      "ui_state": "cancelled"
+    },
+    {
+      "ow_stage": "completed",
+      "ow_status": "skipped",
+      "ui_state": "skipped"
+    },
+    {
+      "ow_stage": "unknown-demo-stage",
+      "ow_status": "unknown-demo-status",
+      "ui_state": "inconclusive"
+    }
+  ]
+}
