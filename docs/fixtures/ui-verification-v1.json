@@ -50,6 +50,24 @@
         }
       }
     },
+    "session_anonymous_200": {
+      "schemaVersion": "1",
+      "asOf": "2024-01-02T12:34:00Z",
+      "timezone": "UTC",
+      "data": {
+        "authenticated": false,
+        "accessState": "anonymous",
+        "canReadVerification": false
+      },
+      "coverage": {},
+      "warnings": [],
+      "extensions": {
+        "fixture": {
+          "synthetic": true,
+          "case": "session_anonymous_200"
+        }
+      }
+    },
     "overview_mixed": {
       "schemaVersion": "1",
       "asOf": "2024-01-02T12:30:00Z",
@@ -827,6 +845,27 @@
           "code": "INVALID_CURSOR",
           "message": "El cursor no es válido para este listado.",
           "requestId": "req-demo-invalid-cursor",
+          "retryable": false,
+          "field": "cursor"
+        }
+      },
+      "cursor_context_mismatch_400": {
+        "schemaVersion": "1",
+        "asOf": "2024-01-02T12:34:00Z",
+        "timezone": "UTC",
+        "data": null,
+        "coverage": {},
+        "warnings": [],
+        "extensions": {
+          "fixture": {
+            "synthetic": true,
+            "case": "cursor_context_mismatch_400"
+          }
+        },
+        "error": {
+          "code": "CURSOR_CONTEXT_MISMATCH",
+          "message": "The cursor does not match the current list context.",
+          "requestId": "req-demo-cursor-context",
           "retryable": false,
           "field": "cursor"
         }

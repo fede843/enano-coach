@@ -1,0 +1,19 @@
+{
+  "name": "Enano Coach | Verificación",
+  "short_name": "Verificación",
+  "description": "Consola de solo lectura para revisar lecturas y cobertura.",
+  "lang": "es",
+  "start_url": "/verify",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f1e8",
+  "theme_color": "#121827",
+  "icons": [
+    {
+      "src": "/icons/mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

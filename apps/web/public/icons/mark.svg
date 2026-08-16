@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Enano Coach</title>
+  <desc id="desc">Marca geometrica de una consola de verificacion</desc>
+  <rect width="512" height="512" rx="96" fill="#121827"/>
+  <path d="M112 112h86v116h116V112h86v288h-86V314H198v86h-86z" fill="#b9f2d0"/>
+  <circle cx="368" cy="144" r="24" fill="#ef654f"/>
+</svg>

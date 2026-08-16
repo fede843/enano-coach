@@ -1,0 +1,33 @@
+{
+  "name": "enano-coach-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "React/Vite PWA shell for the Enano Coach verification console",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "vite build",
+    "check": "npm run typecheck && npm run lint && npm test && npm run build",
+    "dev": "vite",
+    "lint": "node scripts/check.mjs lint",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.10"
+  }
+}
