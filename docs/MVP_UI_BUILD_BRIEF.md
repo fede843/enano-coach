@@ -37,18 +37,6 @@ control record:
 [FIXED] The screen must make provenance, coverage, and missing data visible
 without turning absence into zero.
 
-### 1.3 Local Development On The Laptop
-
-[FIXED] The first slice is built directly on the laptop with the frontend and
-BFF as local processes. Docker, Ansible, containerization, and remote deployment
-are not used for these iterations. Those tasks belong to a later phase outside
-this initial implementation brief.
-
-[PROPOSED] Local defaults are `http://localhost:5173` for the frontend and
-`http://localhost:8000` for the BFF. Ports are configurable and are not a
-production contract. The UI calls only relative `/api`; the development-server
-proxy forwards those routes to the BFF without exposing internal URLs to React.
-
 ### 1.2 What It Is Not
 
 `[FIXED]` This first UI is not a coaching application. It must not include:
@@ -64,6 +52,18 @@ proxy forwards those routes to the BFF without exposing internal URLs to React.
 [RISK] A verification-console appearance may look like an operations dashboard.
 Copy, actions, and permissions must make clear that it only observes results and
 allows a new query.
+
+### 1.3 Local Development On The Laptop
+
+[FIXED] The first slice is built directly on the laptop with the frontend and
+BFF as local processes. Docker, Ansible, containerization, and remote deployment
+are not used for these iterations. Those tasks belong to a later phase outside
+this initial implementation brief.
+
+[PROPOSED] Local defaults are `http://localhost:5173` for the frontend and
+`http://localhost:8000` for the BFF. Ports are configurable and are not a
+production contract. The UI calls only relative `/api`; the development-server
+proxy forwards those routes to the BFF without exposing internal URLs to React.
 
 ### 1.4 Map-Free MVP And Later GPS Phase
 
@@ -134,6 +134,11 @@ PWA with static assets as the only cache.
 routes. The BFF resolves the user from the session and applies authorization
 before querying OW.
 
+[PENDING] Authentik/OIDC references in this brief describe only the future
+production identity contract. It is disabled and unwired for this local
+fixture/read-only slice and is not a prerequisite for the first local read-only
+milestone unless explicitly stated.
+
 The `/verify/...` paths in this brief are browser UI routes. BFF endpoint
 references use the complete `/api/v1/me/verify/...` paths; `/verify/...` is not a
 public BFF route shorthand.
@@ -142,7 +147,7 @@ The browser never receives or knows:
 
 - The OW API key or any service credential.
 - A `user_id` used to select queried data.
-- Persistent OIDC tokens.
+- Persistent tokens from the future production OIDC contract.
 - Internal URLs, private endpoints, or raw file paths.
 - SQL queries, table names, or import payloads.
 
@@ -804,8 +809,8 @@ The build session may be declared complete only when all of the following are me
 - `/verify`, `/verify/sources`, `/verify/runs`, `/verify/runs/:runKey`, and
   `/verify/settings` load without direct OW routes.
 - The FastAPI BFF exposes the provisional contract with a synthetic adapter.
-- The browser receives no API key, `user_id`, OIDC token, internal URL, or raw
-  path.
+- The browser receives no API key, `user_id`, OIDC token from the future
+  production contract, internal URL, or raw path.
 - The view model contains `schemaVersion`, `asOf`, `timezone`, `data`,
   `coverage`, `warnings`, and `extensions`.
 - Loading, empty, real zero, `null`, partial, unsupported, ready, pending,

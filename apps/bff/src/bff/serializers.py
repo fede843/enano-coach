@@ -52,6 +52,8 @@ _SAFE_SOURCE_LABELS = {
     "source-demo-b": "Fuente sintética B",
 }
 _SAFE_SOURCE_KEYS = frozenset(_SAFE_SOURCE_LABELS)
+_LIVE_SOURCE_KEY_PATTERN = re.compile(r"^source-live-[0-9]{2}$")
+_LIVE_SOURCE_LABEL = "Fuente conectada"
 _OVERVIEW_METRIC_UNITS: dict[str, str | None] = {
     "steps": "count",
     "distanceMeters": "meters",
@@ -397,7 +399,9 @@ def _safe_timezone(value: Any) -> str:
 
 
 def _safe_source_key(value: Any) -> str:
-    if not isinstance(value, str) or value not in _SAFE_SOURCE_KEYS:
+    if not isinstance(value, str) or (
+        value not in _SAFE_SOURCE_KEYS and not _LIVE_SOURCE_KEY_PATTERN.fullmatch(value)
+    ):
         raise error_for("UPSTREAM_INVALID")
     return value
 
@@ -1101,8 +1105,8 @@ def _project_source_item(value: Any) -> SourceItem:
     )
     source_key = _safe_source_key(raw.get("sourceKey"))
     label = _safe_text(
-        _SAFE_SOURCE_LABELS.get(source_key),
-        allowed=frozenset(_SAFE_SOURCE_LABELS.values()),
+        _SAFE_SOURCE_LABELS.get(source_key, _LIVE_SOURCE_LABEL),
+        allowed=frozenset((*_SAFE_SOURCE_LABELS.values(), _LIVE_SOURCE_LABEL)),
     )
     state = raw.get("state")
     if _allowed_string(state, frozenset({"ready", "source_ambiguous"})) is None:

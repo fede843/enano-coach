@@ -296,7 +296,8 @@ function overviewPage(state: AppState, actions: ViewActions): ReactElement {
   const envelope = state.page.envelope as Envelope<OverviewData>;
   const data = envelope.data;
   const summary = data?.summary || {};
-  const fieldCount = Object.keys(summary).length;
+  const observedSummary = Object.values(summary).filter((metric) => metric.state !== "unsupported");
+  const fieldCount = observedSummary.length;
   const isEmpty = fieldCount === 0 && envelope.coverage.availableDays === 0;
   return (
     <>

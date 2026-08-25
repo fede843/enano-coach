@@ -25,7 +25,14 @@ import type {
   RunsState,
 } from "./types";
 
-const DEFAULT_DATE = "2024-01-02";
+function currentLocalDate(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 const DEFAULT_TIMEZONE = "UTC";
 
 type Context = { date: string; timezone: string };
@@ -61,9 +68,10 @@ function initialRuns(): RunsState {
 }
 
 export function initialState(pathname = typeof window === "undefined" ? "/verify" : window.location.pathname): AppState {
+  const defaultDate = currentLocalDate();
   return {
     route: routeFromPath(pathname),
-    context: { date: DEFAULT_DATE, timezone: DEFAULT_TIMEZONE },
+    context: { date: defaultDate, timezone: DEFAULT_TIMEZONE },
     sessionStatus: "loading",
     session: null,
     sessionError: null,
@@ -220,7 +228,7 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
     if (isRetryBlocked(retryUntil)) return;
     const values = new FormData(event.currentTarget);
     focusMainAfterRender.current = true;
-    setContext({ date: String(values.get("date") || DEFAULT_DATE), timezone: String(values.get("timezone") || DEFAULT_TIMEZONE) });
+    setContext({ date: String(values.get("date") || currentLocalDate()), timezone: String(values.get("timezone") || DEFAULT_TIMEZONE) });
   }
 
   function onRunsSubmit(event: FormEvent<HTMLFormElement>): void {
@@ -329,7 +337,7 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
 }
 
 export default function App(): ReactElement {
-  const [context, setContext] = useState<Context>({ date: DEFAULT_DATE, timezone: DEFAULT_TIMEZONE });
+  const [context, setContext] = useState<Context>(() => ({ date: currentLocalDate(), timezone: DEFAULT_TIMEZONE }));
 
   return (
     <Routes>

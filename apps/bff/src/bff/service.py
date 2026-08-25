@@ -24,7 +24,12 @@ from .serializers import (
     validate_adapter_run_detail_response,
     validate_adapter_run_list_response,
 )
-from .session import SessionContext, require_active_session, session_from_settings
+from .session import (
+    OwnerContext,
+    SessionContext,
+    require_active_session,
+    session_from_settings,
+)
 from .store import (
     ALLOWED_DOMAINS,
     RUN_STATES,
@@ -79,6 +84,37 @@ ADAPTER_ERROR_CODES: dict[str, tuple[ErrorCode, int | None]] = {
     "RATE_LIMITED": ("RATE_LIMITED", 30),
     "INTERNAL_ERROR": ("INTERNAL_ERROR", None),
 }
+
+
+class _OfflineAdapterBoundary:
+    """Bind the legacy fixture adapter to the server-only adapter interface."""
+
+    def __init__(self, adapter: OfflineFixtureAdapter) -> None:
+        self.adapter = adapter
+
+    def get_bff_response(
+        self, case: str, *, owner_context: OwnerContext
+    ) -> dict[str, Any]:
+        del owner_context
+        return self.adapter.get_bff_response(case)
+
+
+class _OwnerBoundAdapter:
+    def __init__(self, adapter: Any, owner_context: OwnerContext) -> None:
+        self.adapter = adapter
+        self.owner_context = owner_context
+
+    def get_bff_response(self, case: str) -> Any:
+        return self.adapter.get_bff_response(
+            case,
+            owner_context=self.owner_context,
+        )
+
+
+def bind_adapter(adapter: Any) -> Any:
+    if isinstance(adapter, OfflineFixtureAdapter):
+        return _OfflineAdapterBoundary(adapter)
+    return adapter
 
 
 def validate_date(value: str | None, *, field: str = "date") -> tuple[str, date_type]:
@@ -171,15 +207,14 @@ class BFFService:
     def __init__(
         self,
         *,
-        adapter: OfflineFixtureAdapter,
+        adapter: Any,
         settings: Settings,
         store: VerificationRunStore,
     ) -> None:
-        self.adapter = adapter
+        self.adapter = bind_adapter(adapter)
         self.settings = settings
         self.store = store
         self.session = session_from_settings(settings)
-        self._store_seeded = False
 
     def session_payload(self) -> dict[str, Any]:
         if self.session.mode == "active":
@@ -192,10 +227,8 @@ class BFFService:
                 can_read_verification=True,
             )
         if self.session.mode == "anonymous":
-            response = self._adapter_response("session_anonymous_200")
-            self._raise_for_adapter_error(response)
             return serialize_session(
-                response,
+                {},
                 authenticated=False,
                 access_state="anonymous",
                 can_read_verification=False,
@@ -208,7 +241,16 @@ class BFFService:
         )
 
     def require_active(self) -> SessionContext:
-        return require_active_session(self.session)
+        session = require_active_session(self.session)
+        if session.owner_context is None:
+            raise error_for("FORBIDDEN")
+        return session
+
+    def _owner_context(self) -> OwnerContext:
+        owner_context = self.session.owner_context
+        if owner_context is None:
+            raise error_for("FORBIDDEN")
+        return owner_context
 
     def validate_context(
         self, date_value: str | None, timezone_value: str | None
@@ -238,10 +280,24 @@ class BFFService:
     def overview(
         self, *, logical_date: str, parsed_date: date_type, timezone_name: str
     ) -> dict[str, Any]:
+        self._owner_context()
         self._check_dependency_case()
-        case = "overview_mixed" if logical_date == "2024-01-02" else "overview_empty"
-        response = self._adapter_response(case)
         start, end = local_midnight_window(parsed_date, timezone_name)
+        case = ""
+        live_getter = getattr(self.adapter, "get_overview_response", None)
+        if live_getter is None:
+            case = (
+                "overview_mixed" if logical_date == "2024-01-02" else "overview_empty"
+            )
+            response = self._adapter_response(case)
+        else:
+            response = live_getter(
+                logical_date=logical_date,
+                timezone_name=timezone_name,
+                from_utc=start,
+                to_utc=end,
+                owner_context=self._owner_context(),
+            )
         self._raise_for_adapter_error(response)
         return serialize_overview(
             response,
@@ -253,13 +309,25 @@ class BFFService:
         )
 
     def sources(self, *, logical_date: str, timezone_name: str) -> dict[str, Any]:
+        self._owner_context()
         self._check_dependency_case()
-        case = "source_ready" if logical_date == "2024-01-02" else "source_ambiguous"
-        response = self._adapter_response(case)
+        live_getter = getattr(self.adapter, "get_sources_response", None)
+        if live_getter is None:
+            case = (
+                "source_ready" if logical_date == "2024-01-02" else "source_ambiguous"
+            )
+            response = self._adapter_response(case)
+        else:
+            response = live_getter(
+                logical_date=logical_date,
+                timezone_name=timezone_name,
+                owner_context=self._owner_context(),
+            )
         self._raise_for_adapter_error(response)
         return serialize_sources(response, timezone_name=timezone_name)
 
     def settings_payload(self) -> dict[str, Any]:
+        self._owner_context()
         self._check_dependency_case()
         response = self._adapter_response("settings_capabilities")
         self._raise_for_adapter_error(response)
@@ -275,6 +343,7 @@ class BFFService:
         cursor: str | None,
         timezone_value: str | None,
     ) -> dict[str, Any]:
+        owner_context = self._owner_context()
         timezone_name = validate_timezone(
             "UTC" if timezone_value is None else timezone_value
         )
@@ -304,6 +373,8 @@ class BFFService:
             state=state,
             limit=limit,
             timezone=timezone_name,
+            owner_key=owner_context.owner_key,
+            ow_user_key=owner_context.ow_user_key,
         )
         self.store.validate_cursor(cursor=cursor, context=context)
         self._ensure_store_seeded()
@@ -337,6 +408,7 @@ class BFFService:
         idempotency_key: str | None,
         origin: str | None,
     ) -> tuple[dict[str, Any], RunRecord]:
+        owner_context = self._owner_context()
         if origin not in self.settings.allowed_origins:
             raise error_for("FORBIDDEN")
         idempotency_key = validate_idempotency_key(idempotency_key)
@@ -354,6 +426,8 @@ class BFFService:
             scope_timezone=timezone_name,
             domains=domains,
             idempotency_key=idempotency_key,
+            owner_key=owner_context.owner_key,
+            ow_user_key=owner_context.ow_user_key,
         )
         if existing is not None:
             return (
@@ -375,23 +449,64 @@ class BFFService:
             scope_timezone=timezone_name,
             domains=domains,
             idempotency_key=idempotency_key,
+            owner_key=owner_context.owner_key,
+            ow_user_key=owner_context.ow_user_key,
         )
-        payload = serialize_run_create(
-            response, record=record, timezone_name=timezone_name
-        )
+        try:
+            payload = serialize_run_create(
+                response, record=record, timezone_name=timezone_name
+            )
+        except Exception:
+            if created:
+                self.store.rollback_create(
+                    owner_session_key=self.session.session_key,
+                    idempotency_key=idempotency_key,
+                    record=record,
+                    scope_date=logical_date,
+                    scope_timezone=timezone_name,
+                    domains=domains,
+                    owner_key=owner_context.owner_key,
+                    ow_user_key=owner_context.ow_user_key,
+                )
+            raise
         if created:
             self.store.commit_create(
                 owner_session_key=self.session.session_key,
                 idempotency_key=idempotency_key,
                 record=record,
+                scope_date=logical_date,
+                scope_timezone=timezone_name,
+                domains=domains,
+                owner_key=owner_context.owner_key,
+                ow_user_key=owner_context.ow_user_key,
             )
         return payload, record
 
     def run_detail(self, run_key: str) -> dict[str, Any]:
+        owner_context = self._owner_context()
         if not re.fullmatch(r"verify-demo-[a-z0-9-]+", run_key):
             raise error_for("RUN_NOT_FOUND")
-        self._ensure_store_seeded()
-        record = self.store.get(run_key, self.session.session_key)
+        record = self.store.get(
+            run_key,
+            self.session.session_key,
+            owner_key=owner_context.owner_key,
+            ow_user_key=owner_context.ow_user_key,
+        )
+        if record is None:
+            if self.store.has_foreign_run(
+                run_key,
+                self.session.session_key,
+                owner_context.owner_key,
+                owner_context.ow_user_key,
+            ):
+                raise error_for("RUN_NOT_FOUND")
+            self._ensure_store_seeded()
+            record = self.store.get(
+                run_key,
+                self.session.session_key,
+                owner_key=owner_context.owner_key,
+                ow_user_key=owner_context.ow_user_key,
+            )
         if record is None:
             raise error_for("RUN_NOT_FOUND")
         self._check_dependency_case()
@@ -424,15 +539,27 @@ class BFFService:
         raise error_for("UPSTREAM_INVALID")
 
     def _ensure_store_seeded(self) -> None:
-        if self._store_seeded or not self.store.is_empty:
-            self._store_seeded = True
+        owner_context = self._owner_context()
+        seed_context = (
+            self.session.session_key,
+            owner_context.owner_key,
+            owner_context.ow_user_key,
+        )
+        if self.store.is_seeded(*seed_context):
             return
-        self.store.seed_from_adapter(self.adapter, self.session.session_key)
-        self._store_seeded = True
+        self.store.seed_from_adapter(
+            _OwnerBoundAdapter(self.adapter, owner_context),
+            self.session.session_key,
+            owner_key=owner_context.owner_key,
+            ow_user_key=owner_context.ow_user_key,
+        )
 
     def _adapter_response(self, case: str) -> Any:
         try:
-            return self.adapter.get_bff_response(case)
+            return self.adapter.get_bff_response(
+                case,
+                owner_context=self._owner_context(),
+            )
         except FixtureContractError as exc:
             raise error_for("UPSTREAM_INVALID") from exc
         except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:

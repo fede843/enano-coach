@@ -34,6 +34,20 @@ The UI must call only relative paths such as `/api`; the development server
 proxy may forward those paths to the local BFF. Never embed an internal URL, an
 OW URL, or a server-side credential in the frontend.
 
+[FIXED] The approved development order is: complete the synthetic
+fixture -> adapter/BFF -> existing UI slice; use an explicit loopback-only
+dev/test access mode when needed; then reach the first real-data milestone of
+read-only OW summary/source data through the BFF to that existing UI. The
+real-data milestone adds no health-fact writes, imports, maps, or production
+claims.
+
+[FIXED] Local development may use an explicit, opt-in loopback-only dev/test
+access mode with a server-side configured owner reference and OW credential.
+This mode is not production authorization and must not be enabled outside
+loopback/test boundaries. Authentik/OIDC is a `future_contract` for production
+and remains disabled and unwired for now. The browser never sends an API key,
+user ID, owner reference, OW credential, or internal URL.
+
 The local OW fork is the development baseline, not a release. Uncommitted
 changes are not reproducible and must not be presented as an OW version, a
 public API, or a deployment reference.
@@ -67,41 +81,59 @@ The plan and handoff documents are coordinated sources. Do not edit
 `docs/PROJECT_PLAN.md`, `docs/START_SESSION_PROMPT.md`, or
 `docs/HANDOFF_TEMPLATE.md` from a task that does not explicitly assign them.
 
-## Absolute delegation
+## Delegation And Workflow Modes
 
-All technical searching, design, editing, implementation, testing, diff review,
-privacy review, final validation, deployment, and integration are delegated to
-one or more subagents through `Task`. The primary agent coordinates, divides
-the work, sets scope, integrates handoffs, and communicates results.
+[FIXED] Exactly one top-level subagent layer is allowed. Every delegated
+assignment uses `subagent_depth: 1`; a subagent executes its assigned scope
+directly and must never call `Task`, create a nested agent, or delegate further.
+If it cannot perform the scope, it reports the blocker in its handoff.
 
-The primary agent does not directly perform implementation, tests, diff review,
-the privacy pass, or final validation; each activity is delegated to an agent
-independent of the author.
+[FIXED] `local/personal` mode is the default for laptop work, synthetic
+fixtures, and the explicit loopback-only dev/test read milestone:
 
-If `Task` is unavailable in a parent session, stop the technical task and
-request a resolution. Do not replace `Task` with direct work by the primary
-agent.
+1. One implementation subagent makes the scoped change and returns a handoff.
+2. After that handoff, one independent validation subagent checks correctness,
+   privacy, and final-scope criteria together.
+3. Dependent work is sequential; the coordinator must not parallelize it or
+   reopen a passed gate without a new relevant change.
+4. If validation finds a blocker, allow at most one targeted fix and one
+   revalidation round. If the blocker remains, stop and report it; do not start
+   an endless review loop.
 
-Each assignment to a subagent must include relative paths, input and output
-contracts, privacy boundaries, evidence classification, and expected
-verification commands. The handoff must separate observed facts, proposals,
-pending items, and risks.
+Each assignment states relative paths, input and output contracts, privacy
+boundaries, evidence classification, expected verification commands, and
+`subagent_depth: 1`. Handoffs separate observed facts, proposals, pending
+items, and risks. The coordinator integrates the two local handoffs and does
+not turn a fixture or local observation into a public API or production claim.
 
-## Parallelization and files
+[FIXED] `production/release` mode is activated only by an explicit production
+or release decision. It retains the stronger gates: separate sequential
+correctness, privacy, and final reviews; an immutable OW/parser/application
+reference; reviewed migrations; backup and restore evidence; documented
+rollback; and deployment checks. Those gates are not mandatory for every small
+local change, but their absence keeps production work `[PENDING]`.
 
-Read-only auditors may work in parallel, including on the same files. Only
-concurrent editing of the same file is prohibited. Writing tasks may be
-parallelized only when they have independent files. The primary agent assigns
-one owner per file and resolves conflicts through handoffs, not simultaneous
-edits.
+If `Task` is unavailable for a task that requires delegation, stop that task
+and record the blocker rather than inventing a review or pretending that it
+ran. An explicit user instruction may authorize the coordinator to edit these
+workflow documents directly; it does not waive the validation or safety
+boundaries.
 
-Every technical delivery requires an independent reviewer. The reviewer must
-read the diff and the produced evidence without relying on the implementer's
-report. An independent privacy agent and an independent final-validation agent
-must also review artifacts when the task affects them; the primary only
-integrates their handoffs and does not replace those reviews. Do not declare
-success without real, recent evidence: validation output, an inspected diff,
-and independent handoffs.
+## Coordination And Files
+
+Top-level delegated work is sequential by default. Independent read-only work
+may run concurrently only when it has no dependency or shared write scope; the
+coordinator must not parallelize dependent implementation and validation. Each
+file has one owner at a time, and a conflict is resolved through a handoff
+before ownership changes. Do not reopen already-passed checks unless a new
+relevant change affects their scope.
+
+Every local technical delivery requires the independent validation handoff. The
+validator must read the diff and evidence without relying only on the
+implementation report, and must combine correctness, privacy, and final checks.
+Production/release work additionally requires the separate multi-review
+handoffs described above. Do not declare success without recent validation
+output, an inspected diff, and the required handoff(s).
 
 ## Domain invariants
 
@@ -128,11 +160,14 @@ and independent handoffs.
 ## OW baseline and release
 
 Work on the local fork for investigation and development, but a fork with
-uncommitted changes is not a release. Before real OW integration or deployment,
-an immutable and auditable reference is required: a clean commit, immutable
-tag/release, or image digest. Compatibility among the backend, frontend,
-migrations, parser, and contracts must also be checked, with a backup, reviewed
-migration, and documented rollback where applicable.
+uncommitted changes is not a release. Before production/release OW integration
+or deployment, an immutable and auditable reference is required: a clean
+commit, immutable tag/release, or image digest. Compatibility among the
+backend, frontend, migrations, parser, and contracts must also be checked, with
+a backup, reviewed migration, and documented rollback where applicable. A
+loopback-only local read may use the observed fork as development evidence, but
+its pin and compatibility remain `[PENDING]` and it must not be presented as a
+release or public API.
 
 Do not use `latest` as a production contract. Do not call a local extension
 upstream without an integration decision and a reproducible reference.
@@ -186,7 +221,8 @@ confuse these dimensions with UI states such as `unsupported`,
 
 ### Parser and importer baseline
 
-`Gadgetbridge-OW` also needs a reproducible reference before real integration.
+`Gadgetbridge-OW` also needs a reproducible reference before production/release
+integration.
 The current state is an observed local checkout, and the exact commit, tag, or
 release remains `[PENDING]`; do not treat it as a release or deployment
 contract. Any existing SQL helper or `--ow-db-url` option is outside the normal
@@ -224,35 +260,41 @@ acceptance or queuing only, never terminal persistence.
 - `raw_not_public`: upstream metadata, messages, errors, and raw payloads never
   reach the browser or enter public fixtures.
 
-Sanitization, its allowlist, and its tests remain `[PENDING]` before real
-integration. Do not present sanitization of raw metadata, `message`, or `error`
-as complete: the BFF owns this responsibility, and the public output may only
-be `BFF_sanitized` after verification.
+Sanitization, its allowlist, and its tests remain `[PENDING]` until verified.
+The local read milestone must still expose only the allowlisted projection; do
+not present sanitization of raw metadata, `message`, or `error` as complete.
+The BFF owns this responsibility, and the public output may only be
+`BFF_sanitized` after verification.
 
 ## Expected validations
 
-Subagents must select validations proportional to the change and return real
-evidence. When applicable, expect:
+[FIXED] In `local/personal` mode, choose validations proportional to the
+changed package and return real evidence. The minimum local profile is:
 
-- YAML and JSON parsing, valid relative links, and `git diff --check`.
-- Unit, contract, integration, and Playwright tests without real OW for the
-  first slice.
-- Local lint, typecheck, and build; Compose checking applies only to the later
-  containerization phase and is not run to start the first slice.
-- Tests for `401`, `403`, `404`, `409`, `410`, `429`, `500`, `502`, `503`,
-  `504`, and date, timezone, cursor, and scope validation. `[VERIFIED]`
-  `ui-verification-v1.json` already covers anonymous sessions and
-  `ACCESS_BLOCKED`/`403`, along with `409`, `429`, and `500`, without inventing
-  real payloads. `[PENDING]` Implement and test the real HTTP runtime for
-  session, ownership, idempotency, rate limiting, sanitization, and errors.
-- Scanning for secrets, private paths, internal hosts, PII, health data, and
-  GPS.
-- Review that the PWA caches only shell/assets and not private responses.
-- Verification of migrations, idempotency, pagination, and terminal states when
-  OW or an importer changes.
+- Focused tests for changed code and the relevant full suite.
+- `git diff --check`, Markdown and relative-link checks, and JSON/YAML parsing
+  for the changed documents and fixtures.
+- One disposable migration/API smoke using synthetic or ephemeral data only
+  when the changed package crosses a database or OW boundary. Never use
+  external SQL against OW.
+- A targeted privacy/correctness review of the changed surface, including
+  secrets, private paths or hosts, identifiers, health data, GPS, raw payloads,
+  browser credentials, ownership, and direct OW access as applicable.
 
-These validations do not authorize accidental deployment. For the first slice,
-they are local on the laptop, offline, read-only, dry-run, or against synthetic
-fixtures. Do not run Docker, Ansible, `compose up`, migrations against real
-data, real imports, or deployments without explicit separate user
-authorization, in addition to the immutable reference required above.
+Do not require repeated exhaustive scans, backup/restore, Playwright,
+production-like gates, or multiple redundant handoffs for every small local
+change. Run those checks when the changed surface or an explicit
+`production/release` decision requires them. `[VERIFIED]`
+`ui-verification-v1.json` covers anonymous sessions and `ACCESS_BLOCKED`/`403`,
+along with `409`, `429`, and `500`, without inventing real payloads.
+`[PENDING]` The real HTTP runtime for session, ownership, idempotency, rate
+limiting, sanitization, and errors still needs its own focused tests when that
+package changes.
+
+These validations do not authorize accidental deployment. For the first slice
+and local read milestone, they are local on the laptop, offline, read-only,
+dry-run, disposable, or against synthetic fixtures. Do not run Docker, Ansible,
+`compose up`, migrations against real data, real imports, or deployments
+without explicit separate user authorization. Production/release mode still
+requires the immutable reference, backup/restore, rollback, and deployment
+gates described above.

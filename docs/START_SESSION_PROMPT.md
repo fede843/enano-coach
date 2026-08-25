@@ -8,40 +8,65 @@ verifiable, reversible changes. Do not turn an assumption into a contract.
 
 1. Before modifying code, fixtures, configuration, or tests, read in the order
    specified in section 1.
-2. Every technical task must use subagents. This includes auditing, design,
-   implementation, testing, accessibility, security, diff review, privacy, and
-   final validation. The primary agent does not directly perform implementation,
-   tests, diff review, the privacy pass, or final validation; each activity is
-   delegated to an agent independent of the author.
-3. Divide the work into waves, assign file ownership, and require a handoff from
-   every subagent. Do not allow two subagents to edit the same file at the same
-   time.
-4. The canonical first-delivery strategy is: read-only health reads with
+2. Exactly one top-level subagent layer is allowed. Every delegated assignment
+   uses `subagent_depth: 1`; never increase it.
+3. A subagent executes its assigned scope directly. It must not call `Task`,
+   create a nested agent, or recursively delegate. If it cannot perform the
+   scope, it reports the blocker in its handoff.
+4. In the default `local/personal` mode, use one implementation subagent and
+   then one independent validation subagent. The validator combines correctness,
+   privacy, and final-scope checks. The primary agent waits for each handoff.
+5. Dependent work is sequential. Do not parallelize dependent implementation and
+   validation, and do not reopen an already-passed gate without a new relevant
+   change. If validation finds a blocker, allow at most one targeted fix and one
+   revalidation round; then stop and report any remaining blocker.
+6. An explicit production/release decision activates `production/release` mode.
+   It retains and requires separate sequential correctness, privacy, and final
+   reviews; immutable references; reviewed migrations; backup/restore evidence;
+   documented rollback; and deployment checks. These gates are not
+   `local/personal` requirements for every small change.
+7. Every delegated assignment states its relative paths, contracts, privacy
+   boundaries, evidence classification, expected verification commands, and
+   `subagent_depth: 1`. Do not allow overlapping file ownership.
+8. The canonical first-delivery strategy is: read-only health reads with
    respect to OW; the BFF may create its own idempotent `VerificationRun`
    without mutating OW health facts. The chain remains:
    synthetic fixture -> BFF -> responsive UI.
-5. The first iterations run directly on the laptop, with fixtures and local
+9. The approved order is the synthetic fixture -> adapter/BFF -> existing UI
+   slice, followed by the first real-data milestone of read-only OW
+   summary/source data through the BFF to that existing UI. The real-data
+   milestone has no health writes, imports, maps, or production claims.
+10. The first iterations run directly on the laptop, with fixtures and local
    tools. Use `http://localhost:5173` as the proposed frontend default and
    `http://localhost:8000` as the proposed BFF default; both ports are
    configurable and do not form a production contract. The UI uses relative
    `/api` through the local proxy.
-6. Do not use real data, a real OW instance, personal exports, credentials, raw
-   payloads, direct SQL, or invented endpoints.
-7. Do not use Docker, Ansible, or remote deployment for the first iterations.
-   Containerization and moving to another host are later phases.
-8. Do not deploy, publish, push, change external repositories, or access
-   private services without an explicit user instruction.
-9. Do not commit, amend, or perform a destructive reset. The worktree may
-   contain changes from another person or session: inspect them and do not
-   revert them without an explicit instruction.
-10. Do not edit `AGENTS.md`, the skills, `docs/PROJECT_PLAN.md`, or the
+11. Local development may use an explicit, opt-in loopback-only dev/test access
+    mode with a server-side configured owner reference and OW credential. This
+    is not production authorization and must remain disabled outside
+    loopback/test boundaries. The browser never sends an API key, user ID,
+    owner reference, OW credential, or internal URL.
+12. Authentik/OIDC is a `future_contract` for production and remains disabled
+    and unwired for now. Do not use OIDC as a prerequisite for the synthetic
+    slice or the loopback-only first real-data read milestone.
+13. Do not use real data, a real OW instance, personal exports, credentials, raw
+    payloads, direct SQL, or invented endpoints during the synthetic slice. The
+    later real-data milestone is limited to the approved read-only BFF path.
+14. Do not use Docker, Ansible, or remote deployment for the first iterations.
+    Containerization and moving to another host are later phases.
+15. Do not deploy, publish, push, change external repositories, or access
+    private services without an explicit user instruction.
+16. Do not commit, amend, or perform a destructive reset. The worktree may
+    contain changes from another person or session: inspect them and do not
+    revert them without an explicit instruction.
+17. Do not edit `AGENTS.md`, the skills, `docs/PROJECT_PLAN.md`, or the
     contracts during the first slice unless the user explicitly orders a
     contract or rules change. A new contract requires a separate decision and
     handoff.
-11. Use relative paths in documentation and handoffs. Do not publish absolute
+18. Use relative paths in documentation and handoffs. Do not publish absolute
     paths, hosts, domains, usernames, or environment details.
-12. The session must not end with an optimistic summary if evidence, a test, an
-    independent review, or a scope decision is missing.
+19. The session must not end with an optimistic summary if evidence, a test, an
+    independent validation, or a scope decision is missing.
 
 ## 1. Mandatory Reading and Order
 
@@ -101,9 +126,9 @@ release.
 
 Gadgetbridge-OW requires the same treatment: its local state is development
 evidence, and the reproducible commit/tag/release remains `[PENDING]` before
-real integration. Any SQL helper or `--ow-db-url` option remains outside the
-normal SDK/API path and is `[RISK]`/`[PENDING]` until removed or blocked; do not
-claim that it has already been removed.
+production/release integration. Any SQL helper or `--ow-db-url` option remains
+outside the normal SDK/API path and is `[RISK]`/`[PENDING]` until removed or
+blocked; do not claim that it has already been removed.
 
 The phrase "it works in my checkout" is not sufficient evidence for a release,
 public contract, safe migration, or reproducible rollback.
@@ -111,60 +136,59 @@ public contract, safe migration, or reproducible rollback.
 ## 3. Mandatory Subagent Coordination
 
 Coordination is part of the result. Choose subagents with distinct roles and
-have each one produce a brief handoff before another wave begins.
+have each one produce a brief handoff before the next top-level task begins.
+The primary agent is the only coordinator and the only caller of `Task`. Every
+call is a top-level assignment with `subagent_depth: 1`; subagents never call
+`Task`, create nested agents, or delegate their scope.
 
-### 3.1 Minimum Roles
+### 3.1 Local/Personal Roles
 
-Assign at least these roles when the task includes code or tests:
+Use two roles for a normal local change:
 
 | Role | Responsibility | Write access |
 |---|---|---|
-| Evidence auditor | Contracts, fixtures, OW fork, claims, and limits | None |
-| Security and privacy auditor | Secrets, ownership, SQL, cache, logs, and public data | None |
-| Fixture and adapter agent | Synthetic fixtures, deterministic adapter, and fixture tests | Assigned fixture/adapter files only |
-| BFF agent | Allowlist, transformations, errors, server-side auth, and BFF tests | Assigned BFF and BFF test files only |
-| UI agent | Shell, routes, view model, states, responsiveness, and accessibility | Assigned frontend and UI test files only |
-| Test agent | Unit, contract, integration, and Playwright tests, separate from authors | Assigned test files only |
-| Independent reviewer | Reviews diff, evidence, links, and scope without writing the change | None during the first review |
-| Privacy auditor | Repeats the scan for secrets, raw metadata, hosts, paths, PII, health data, and GPS | None |
-| Independent final validator | Confirms closing criteria and validations after corrections | None |
+| Implementation subagent | Makes the scoped change and runs focused checks | Assigned files only |
+| Independent validation subagent | Reads the diff/evidence and combines correctness, privacy, and final checks | No implementation files |
 
-If the platform does not support subagents, do not pretend that you used them.
-Stop the technical task, record the blocker in the handoff, and request
-instructions.
+The implementation handoff precedes the validation assignment. If the platform
+does not support the required subagent, record the blocker in the handoff rather
+than pretending that it ran.
 
-### 3.2 Work Waves
+### 3.2 Local/Personal Workflow
 
-Use these waves unless the user approves another sequence:
-
-| Wave | Work | Dependencies | Deliverable |
+| Step | Work | Dependency | Deliverable |
 |---|---|---|---|
-| 0. Evidence | Contract auditor and security auditor in parallel, both read-only | None | Fact, limit, risk, and candidate-file matrix |
-| 1. Fixture | Build or complete the synthetic adapter and its tests | Wave 0 handoff | Fixture -> deterministic BFF response, without real OW |
-| 2. BFF | Expose read-only health reads with respect to OW, record the BFF-owned VerificationRun, and adapt the fixture to a view model | Wave 1 handoff | Valid, sanitized, tested BFF responses |
-| 3. UI | Consume only the BFF and render all states | Wave 2 handoff | Responsive, accessible UI without direct OW routes |
-| 4. Verification | Independent test agent, diff reviewer, and privacy auditor | Wave 3 handoff | Findings ordered by severity with reproducible evidence |
-| 5. Closure | Independent final validator confirms the result; coordinator only integrates handoffs | Wave 4 handoff | Complete final handoff without unsupported claims |
+| 1. Implementation | One subagent makes the scoped change | None | Change, focused evidence, and handoff |
+| 2. Validation | One independent subagent reviews correctness, privacy, and final scope together | Implementation handoff | Findings, validation output, and handoff |
 
-Do not start wave 2 if the adapter lacks sufficient synthetic cases. Do not
-start wave 3 if the BFF lacks a verifiable contract and error behavior. Do not
-declare Done without wave 4, the final validator's handoff, and a subsequent
-review of every correction. The coordinator cannot replace any of these agents.
+Each assignment is top-level with `subagent_depth: 1`; subagents never call
+`Task` or create nested tasks. The primary agent waits for each handoff, does
+not parallelize dependent work, and does not reopen a passed gate without a new
+   relevant change. If validation finds a blocker, allow at most one targeted fix
+   and one revalidation round. Then stop and report any remaining blocker.
+
+`production/release` mode retains and requires separate sequential correctness,
+privacy, and final reviews, immutable references, reviewed migrations,
+backup/restore evidence, documented rollback, and deployment checks. Do not
+apply those production gates to every small local change.
 
 ### 3.3 Ownership and Handoffs
 
 - Before editing, publish an ownership table with relative paths and file
   patterns.
-- A subagent edits only its assigned files. Shared tests are divided by layer or
-  edited serially by a single owner.
-- If two tasks need the same file, pause parallelization, finish the first
-  owner's work, and hand off before reassigning it.
+- A subagent edits only its assigned files and executes only its assigned scope.
+  Shared tests are divided by layer or edited serially by a single owner.
+- Every assignment states `subagent_depth: 1`; no subagent may call `Task` or
+  create a nested task.
+- If two tasks need the same file, pause, finish the first owner's work, and
+  hand off before reassigning it.
+- If a subagent cannot perform its assigned scope, it reports the blocker and
+  evidence in the handoff; it does not recursively delegate.
 - Each subagent handoff must state changes, evidence, decisions, claims,
   capabilities, risks, pending items, rollback, and the next action.
-- Read-only auditors may work in parallel on the same files. Only two agents
-  editing the same file at the same time is prohibited.
-- The independent reviewer cannot rely only on the author's summary: they must
-  read the source evidence and the diff.
+- The primary agent waits for each handoff before assigning the next top-level
+  task. The validation subagent cannot rely only on the author's summary: it
+  must read the source evidence and the diff.
 - A handoff must not contain secrets or private data even if the subagent found
   them. Name only the data type and relative location, without repeating the
   value.
@@ -268,6 +292,11 @@ Ansible, or remote deployment. The frontend uses the proposed local default
 only relative `/api`. Containerization and moving to another host remain
 outside the first slice.
 
+[FIXED] The next milestone after this synthetic delivery is read-only OW
+summary/source data through the BFF to the existing UI. It may use only the
+explicit loopback-only dev/test access mode while Authentik/OIDC is disabled
+and unwired. It does not add health writes, imports, maps, or production claims.
+
 ### 6.1 Fixture
 
 - Use `ow-read-v1.json` as the server-side OW shape in `snake_case`.
@@ -287,6 +316,11 @@ outside the first slice.
 The BFF is the only boundary that may speak to OW in a later phase. For this
 delivery it must work with the synthetic adapter without changing the UI
 contract.
+
+For the first real-data milestone, the BFF may use a server-side configured
+owner reference and OW credential only within the explicit loopback-only
+dev/test mode. This does not authorize browser-supplied ownership, credentials,
+or internal URLs, and it is not production authorization.
 
 - Expose only relative, allowlisted routes from the BFF-UI contract.
 - Resolve ownership and context server-side; never accept `userId` or `owUserId`
@@ -387,8 +421,19 @@ continuing would change the slice contract or risk.
 
 ## 9. Mandatory Verification
 
-Verification must cover the code and the security of the evidence. Assign these
-checks to subagents other than the author where possible:
+Verification is proportional to the changed package and covers both code and
+the security of the evidence. In `local/personal` mode, the minimum is focused
+tests for changed code, the relevant full suite, `git diff --check`, Markdown
+and relative-link checks, and JSON/YAML parsing for changed documents and
+fixtures. Run one disposable migration/API smoke with synthetic or ephemeral
+data only when the change crosses a database or OW boundary. Never use external
+SQL against OW.
+
+The independent validation subagent combines correctness, privacy, and final
+checks. Do not require repeated exhaustive scans, backup/restore, Playwright,
+production-like gates, or multiple redundant handoffs for every small local
+change. Run them when the changed surface requires them or when
+`production/release` mode is explicitly activated.
 
 ### Tests and Contracts
 
@@ -404,7 +449,8 @@ checks to subagents other than the author where possible:
 - Ownership tests that do not accept a client-selected `user_id`.
 - Run-state tests, including `completed + in_progress` -> `inconclusive`.
 - Closed `mismatch` -> `completed_with_findings` tests.
-- Playwright or equivalent fixture tests, without internet or real OW.
+- Playwright or equivalent fixture tests when the UI package or change requires
+  them, without internet or real OW.
 - Existing build and typecheck/lint tests in the repository.
 
 ### Accessibility and Responsiveness
@@ -468,8 +514,14 @@ Complete this list in order and preserve the evidence in the final handoff:
   claiming it has already been removed.
 - [ ] Create the evidence matrix with observed claims, proposals, and pending
   items.
-- [ ] Create file ownership for all waves and name the subagents.
+- [ ] Create file ownership for the implementation and validation scopes and name
+  the subagents.
 - [ ] Confirm that no subagent edits overlapping files.
+- [ ] Confirm that every Task assignment is top-level with
+  `subagent_depth: 1`; no subagent calls Task or creates a nested agent.
+- [ ] Assign one implementation subagent, wait for its handoff, then assign one
+  independent validation subagent; record blockers instead of recursively
+  delegating.
 - [ ] Select mixed, empty, partial, null, zero, unsupported, ambiguous, pending,
   inconclusive, and error synthetic cases.
 - [ ] First implement or verify the offline fixture adapter.
@@ -486,20 +538,19 @@ Complete this list in order and preserve the evidence in the final handoff:
   internal fields to public API.
 - [ ] Confirm that maps/GPS, mutations, AI, comparisons, and direct SQL remain
   outside the diff.
-- [ ] Delegate contract, unit, available integration, and fixture-based
-  Playwright tests to a test agent.
-- [ ] Delegate accessibility and responsiveness to an agent independent of the
-  author.
-- [ ] Delegate security, privacy, raw metadata, links, and reproducibility to
-  independent agents.
-- [ ] Ask an independent reviewer to review the entire diff.
-- [ ] Ask an independent final validator to confirm the closing criteria; the
-  coordinator does not perform this directly.
-- [ ] Correct only demonstrated findings and repeat the review of corrected
-  files.
+- [ ] Run focused tests, the relevant full suite, `git diff --check`, Markdown
+  and relative-link checks, and JSON/YAML parsing for changed documents and
+  fixtures.
+- [ ] Run one disposable migration/API smoke with synthetic or ephemeral data
+  only when the changed package crosses a database or OW boundary.
+- [ ] Have the validation subagent combine correctness, privacy, accessibility,
+  responsiveness, links, and reproducibility checks when relevant; do not add
+  redundant review tasks for a small change.
+- [ ] If validation finds a blocker, make at most one targeted fix and run one
+  revalidation round; then stop and report any remaining blocker.
 - [ ] Complete [`HANDOFF_TEMPLATE.md`](HANDOFF_TEMPLATE.md) with changes,
-  evidence, claims, capabilities, risks, pending items, rollback, and next
-  action.
+  exact files/results, simplifications made, retained safeguards, claims,
+  capabilities, risks, pending items, rollback, and next action.
 
 ## 11. Stop Criteria
 
@@ -511,7 +562,9 @@ occurs:
 - An endpoint, field, state, capability, or semantic has no evidence in a
   contract, fixture, test, or versioned source.
 - The only evidence comes from an uncommitted OW checkout, an internal table, an
-  importer, or an unpublished schema.
+  importer, or an unpublished schema and the work presents it as a production
+  or public claim. A local read may record the checkout as observed evidence
+  while keeping its pin and compatibility `[PENDING]`.
 - The work requires a new OW route, direct SQL, a health-fact mutation, real
   data, a map, GPS, AI, a comparison, or a parallel health database.
 - The work requires accessing, deploying, publishing, modifying, or pushing to
@@ -519,13 +572,16 @@ occurs:
 - A secret, personal datum, real UUID, coordinate, export, raw payload, or
   private path appears in output, a fixture, a log, or a document.
 - Two subagents have overlapping ownership or a wave handoff is missing.
+- A subagent calls `Task`, creates a nested agent, uses a `subagent_depth` other
+  than `1`, or dependent implementation and validation are parallelized.
 - A key test cannot run and there is no explanation of the risk.
 - An error response leaks internal details or the UI turns an error, `null`,
   empty, or pending state into zero.
 - The UI is inaccessible, unusable on mobile, or loses warnings and states.
 - A relative link points to a missing file or JSON does not validate.
-- There is no independent review of the author.
-- The change cannot be reproduced with fixtures and fixed dependencies.
+- There is no independent validation of the implementation handoff.
+- The change cannot be reproduced with the applicable local evidence; fixed
+  dependencies and immutable references remain production/release concerns.
 
 On a stop, preserve the worktree, do not delete evidence, do not commit, and
 deliver a handoff with status `PENDING`, reason, evidence, risk, and the exact
@@ -539,10 +595,13 @@ Closure must be a concise, verifiable public handoff using
 - Coordinating agent and subagents, with their roles.
 - Actual task and scope, including what remained out.
 - Relevant modified and unmodified files, using relative paths.
-- Status of each wave and the overall result.
+- Status of the implementation and validation handoffs and the overall result.
 - Decisions with marker and evidence.
 - Evidence for tests, accessibility, security, privacy, links, and
   reproducibility.
+- Evidence that delegation stayed one level at `subagent_depth: 1`, with the
+  implementation handoff followed by the combined validation handoff. If
+  `production/release` mode is active, list its additional sequential reviews.
 - Contract claims separated into observed, implemented, proposed, and pending.
 - Classified capability matrix and the limits of each capability.
 - Open risks and blocking pending items.

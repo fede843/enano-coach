@@ -18,6 +18,11 @@
 The first slice uses synthetic fixtures and a local adapter; it does not require
 a real OW instance or a private network.
 
+[PENDING] Authentik/OIDC is classified as a `future_contract` for production.
+It is disabled and unwired for the local fixture slice and the first real-data
+read milestone, and it is not a prerequisite for either milestone unless a
+section explicitly states otherwise.
+
 [PROPOSED] Local defaults are a frontend at
 `http://localhost:5173` and a BFF at `http://localhost:8000`. Both ports are
 configurable for development and do not constitute a production contract. The
@@ -33,6 +38,47 @@ Local directory names may appear only as temporary development instructions and
 must never include personal paths, real data, or host-specific public
 configuration.
 
+### 0.1 Approved Development Order
+
+[FIXED] The approved order is:
+
+1. Complete the synthetic fixture -> adapter/BFF -> existing UI slice.
+2. Use an explicit, opt-in loopback-only dev/test access mode when needed,
+   with the owner reference and OW credential configured server-side.
+3. After the required local read/ownership checks are closed, reach the first
+   real-data milestone: read-only OW summary/source data through the BFF to the
+   existing UI. A reproducible OW reference is a production/release gate, not a
+   prerequisite for a local observation.
+4. Treat Authentik/OIDC as the disabled and unwired `future_contract` for
+   production; it is not a prerequisite for the first local read-only dev
+   milestone and is addressed in a later, separately approved phase.
+
+[FIXED] The loopback-only mode is not production authorization and remains
+disabled outside loopback/test boundaries. The browser never sends an API key,
+user ID, owner reference, OW credential, or internal URL. The first real-data
+milestone adds no health-fact writes, imports, maps, or production claims.
+
+### 0.2 Workflow Modes
+
+[FIXED] `local/personal` mode is the default for this laptop project. A normal
+delegated change uses one implementation subagent followed by one independent
+validation subagent. Both are top-level only with `subagent_depth: 1`; subagents
+never call `Task` or delegate. The validation handoff combines correctness,
+privacy, and final-scope checks.
+
+Dependent work is sequential. The coordinator does not parallelize dependent
+implementation and validation, and does not reopen a passed gate without a new
+relevant change. If validation finds a blocker, allow one targeted fix and one
+revalidation round; then stop and report the remaining blocker rather than
+starting an endless review loop.
+
+[FIXED] `production/release` mode starts only after an explicit decision. It
+retains separate correctness, privacy, and final reviews, an immutable
+OW/parser/application reference, reviewed migrations, backup and restore
+evidence, documented rollback, and deployment checks. Those gates are not
+required for every small local change; missing production evidence remains
+`[PENDING]` and never becomes a production claim.
+
 ## 1. Purpose
 
 The project is a custom, responsive web app installable as a PWA for querying
@@ -40,11 +86,15 @@ health data stored in an Open Wearables instance.
 
 The application will have:
 
-- User authentication through Authentik and OIDC.
+- [PENDING] Future production user authentication through Authentik and OIDC;
+  disabled and unwired now and not a prerequisite for the first local read-only
+  dev milestone.
 - An intermediary backend, called the BFF, that centralizes sessions,
   authorization, and access to Open Wearables.
 - A local root administrator for bootstrap and operational recovery.
-- Explicit linking between OIDC identities and Open Wearables users.
+- [PENDING] Explicit linking between future production OIDC identities and Open
+  Wearables users; disabled and unwired with that contract and not a prerequisite
+  for the first local read-only dev milestone.
 - Open Wearables as the single source of truth for normalized health data.
 - Progressive support for daily data, workouts, GPS, swimming, body
   composition, and custom metrics.
@@ -76,10 +126,15 @@ BFF
    |          |             |
     |          |             +--> Technical identity and control database
    |          |
-    |          +----------------> Authentik through OIDC
+    |          +--> Authentik/OIDC (future production contract, disabled now)
    |
     +----------------------------> Open Wearables through a server-side credential
 ```
+
+[PENDING] The Authentik/OIDC branch is a future production topology and remains
+disabled and unwired during the current local development and first real-data
+read milestone. It is not a prerequisite for either milestone. This diagram
+does not claim that production identity is implemented.
 
 The browser must never know the Open Wearables API key or directly send a
 `user_id` to decide which data to query.
@@ -87,7 +142,7 @@ The browser must never know the Open Wearables API key or directly send a
 Open Wearables is the only source of truth for health facts. If the web app has
 its own database, it contains application control data only:
 
-- OIDC identities.
+- Future production OIDC identities, when that contract is enabled.
 - Sessions.
 - Roles and access states.
 - Mappings between local users and Open Wearables users.
@@ -139,15 +194,17 @@ prevent them from entering the commit accidentally.
 Work continues on the local Open Wearables fork as a `[PROPOSED]` development
 baseline. The observed state is not fixed in this repository as a reproducible
 reference and must not be presented as a release, public API, or deployment
-reference. Before integrating OW, record a clean commit, immutable tag/release,
-or digest without publishing private environment identifiers.
+reference. Before production/release integration of OW, record a clean commit,
+immutable tag/release, or digest without publishing private environment
+identifiers.
 
-Before real OW integration or any deployment, an immutable and auditable
-reference is required: a fixed clean commit, immutable tag/release, or image
-digest, together with verified compatibility among the backend, frontend,
-migrations, parser, and contracts. Until that exists, the local fork is not
-called upstream and no local extension is considered part of an upstream
-release.
+Before production/release OW integration or any deployment, an immutable and
+auditable reference is required: a fixed clean commit, immutable tag/release,
+or image digest, together with verified compatibility among the backend,
+frontend, migrations, parser, and contracts. Until that exists, the local fork
+is not called upstream and no local extension is considered part of an upstream
+release. A loopback-only local read may use the observed fork as development
+evidence, but its pin and compatibility remain `[PENDING]`.
 
 Evidence is separated as follows:
 
@@ -176,9 +233,11 @@ claim that all of their capabilities are exposed through the public API.
 
 - Responsive web app for desktop, tablet, and mobile.
 - Installation as a PWA.
-- OIDC authentication through Authentik.
+- [PENDING] Future production OIDC authentication through Authentik; it is not
+  part of the local first read-only slice.
 - Server-side sessions through the BFF.
-- Local root administrator separate from Authentik.
+- Local root administrator separate from the future production Authentik
+  identity provider.
 - Management of local users and their Open Wearables links.
 - Daily dashboard.
 - Sleep and sleep stages.
@@ -459,29 +518,37 @@ The frontend must not know:
 
 - Open Wearables API keys.
 - Service credentials.
-- Persistent OIDC tokens.
+- Persistent tokens from the future production OIDC contract.
 - The local admin password.
 - Internal Docker URLs.
 - PostgreSQL paths.
 - Other users' UUIDs.
 
-### D-05. OIDC with a Server-Side Session
+### D-05. OIDC with a Server-Side Session (Future Production Contract)
+
+[PENDING] The production Authentik/OIDC capability is classified as
+`future_contract` and remains disabled and unwired for the current local/dev
+slice. It is not a prerequisite for the first local read-only dev milestone.
+The following flow is a future design, not a current authentication requirement
+or a public API.
 
 The recommended flow is Authorization Code with PKCE:
 
 1. The browser requests login from the BFF.
 2. The BFF generates `state`, `nonce`, and PKCE.
-3. Authentik authenticates the user.
-4. Authentik returns a code to the BFF.
+3. The future production Authentik provider authenticates the user.
+4. The future production provider returns a code to the BFF.
 5. The BFF validates issuer, audience, signature, expiration, `state`, `nonce`,
    and PKCE.
 6. The BFF resolves the local identity through `issuer + subject`.
 7. The BFF creates its own session.
-8. The browser receives a secure cookie, not OIDC tokens.
+8. When this future contract is enabled, the browser receives a secure cookie,
+   not OIDC tokens.
 
 ### D-06. Local Root Admin
 
-The application will have a local root administrator separate from Authentik.
+The application will have a local root administrator separate from the future
+production Authentik identity provider.
 
 That administrator is used for:
 
@@ -495,14 +562,17 @@ That administrator is used for:
 The password must be stored as a strong hash and supplied by a secret manager.
 It must never be hardcoded in the repository or a Docker image.
 
-### D-07. OW and Authentik Are Different Authorities
+### D-07. OW and Authentik Are Different Authorities (Future Production Identity Contract)
 
-Authentik is the user's identity authority.
+[PENDING] In the future production contract, Authentik is the user's identity
+authority. This distinction is disabled and unwired for the local read-only
+milestones; local access still requires server-side ownership.
 
 Open Wearables is the authority for health data and its own platform.
 
-The web app must join both domains through an explicit mapping. It must not
-assume that an OW user is automatically an OIDC identity.
+The web app must join both domains through an explicit mapping when the future
+production contract is enabled. It must not assume that an OW user is
+automatically a future production OIDC identity.
 
 ### D-08. Server-Side OW API Key
 
@@ -532,8 +602,9 @@ The backend, frontend, and OW extensions must be fixed by:
 - Immutable tag.
 - Image digest.
 
-An OW update must include a backup, reviewed migration, contract tests, and
-documented rollback.
+A production/release OW update must include a backup, reviewed migration,
+contract tests, and documented rollback. Local disposable migration/API checks
+are proportional and never use real OW data.
 
 ---
 
@@ -548,7 +619,7 @@ Traefik or private reverse proxy
         |
         +--> health-web: static frontend
         |
-        +--> health-bff: API, OIDC, and authorization
+        +--> health-bff: API, future production OIDC, and authorization
                     |
                     +--> health-db: optional/owned technical database
                     |
@@ -574,7 +645,8 @@ The frontend must not contain secrets.
 
 Responsibilities:
 
-- OIDC login.
+- [PENDING] Future production OIDC login; disabled and unwired during local
+  read-only milestones.
 - Sessions.
 - CSRF.
 - Authorization.
@@ -724,6 +796,11 @@ data or introducing a vector store prematurely.
 
 ## 9. Authentication, Users, and Privileges
 
+[PENDING] The Authentik/OIDC identity and linking model in this section is a
+future production contract. It is disabled and unwired in local read-only
+milestones and is not a prerequisite for the first local read-only dev
+milestone. Local access still requires explicit server-side ownership.
+
 ### 9.1 Identity Model
 
 The stable identity is:
@@ -793,8 +870,8 @@ audit_event
 - occurred_at
 ```
 
-Do not store OIDC tokens without a documented need. Do not store tokens in the
-browser.
+Do not store tokens from the future production OIDC contract without a
+documented need. Do not store tokens in the browser.
 
 ### 9.3 Roles
 
@@ -806,15 +883,15 @@ Initial roles:
 - `admin`: manages users and application configuration.
 - `root`: full application bootstrap and recovery.
 
-The local root admin may assign roles to OIDC users. Authentik groups may serve
-as an initial access filter, but must not automatically grant critical
-privileges without an explicit policy.
+The local root admin may assign roles to future production OIDC users. Authentik
+groups may serve as an initial access filter in that future contract, but must
+not automatically grant critical privileges without an explicit policy.
 
 ### 9.4 Linking
 
 Recommended flow:
 
-1. The user signs in to Authentik.
+1. In the future production contract, the user signs in to Authentik.
 2. The user is identified by `issuer + subject`.
 3. The BFF creates or retrieves the local user.
 4. If there is no link, the user remains pending.
@@ -1176,7 +1253,9 @@ these three flow labels for every sync response:
 | `raw_not_public` | Raw upstream response or subfields. | Prohibited in the browser and public fixtures. |
 
 `[PENDING]` Sanitization, the count/state allowlist, and raw-metadata rejection
-tests must be closed before integrating OW or Gadgetbridge-OW.
+tests must be closed before production/release integration of OW or
+Gadgetbridge-OW. The local read milestone must still expose only the allowlisted
+projection and keep raw data `raw_not_public`.
 
 ---
 
@@ -1566,7 +1645,7 @@ data.
 - Cache private health responses.
 - Store metrics in IndexedDB without an explicit decision.
 - Store API keys.
-- Store OIDC tokens.
+- Store tokens from the future production OIDC contract.
 - Send notifications with biometric values.
 - Execute offline mutations without safe reconciliation.
 
@@ -1598,8 +1677,8 @@ worker, optional
 health-db, optional until persistent state exists
 ```
 
-Open Wearables and Authentik are external dependencies of the production
-environment.
+Open Wearables and the future production Authentik/OIDC contract are external
+dependencies of the production environment.
 
 ### 15.2 Frontend Dockerfile
 
@@ -1676,7 +1755,7 @@ db healthy
 Conceptual secrets:
 
 ```text
-OIDC_CLIENT_SECRET
+OIDC_CLIENT_SECRET (future production contract)
 OW_API_KEY
 APP_SESSION_SECRET
 ADMIN_PASSWORD_HASH
@@ -1732,13 +1811,28 @@ The repository must not contain:
 
 ---
 
-## 17. CI/CD
+## 17. CI/CD And Validation
 
 [PENDING] CI/CD, image builds, image scans, and `docker compose config` belong to
-a later phase. They are not initial local-development steps and do not authorize
-remote deployment.
+a later production/release phase. They are not initial local-development steps
+and do not authorize remote deployment.
 
-### 17.1 Pull Requests
+### 17.1 Local/Personal Validation
+
+[FIXED] Local validation is proportional to the changed package. Run focused
+tests for changed code, the relevant full suite, `git diff --check`, Markdown
+and relative-link checks, and JSON/YAML parsing for changed documents and
+fixtures. Run one disposable migration/API smoke with synthetic or ephemeral
+data only when the change crosses a database or OW boundary. Never use external
+SQL against OW.
+
+The independent validation subagent combines correctness, privacy, and final
+scope checks. Do not require repeated exhaustive scans, backup/restore,
+Playwright, production-like gates, or multiple redundant handoffs for every
+small local change. Run those checks when the changed surface requires them or
+when `production/release` mode is explicitly activated.
+
+### 17.2 Production/Release Validation
 
 Run:
 
@@ -1756,7 +1850,7 @@ Run:
 - Image scan.
 - SBOM generation.
 
-### 17.2 Releases
+### 17.3 Releases
 
 A release must:
 
@@ -1781,7 +1875,7 @@ Production must use an immutable digest or tag, never `latest`.
 | Open Wearables | Health data, API, and domain extensions |
 | Importers | Extraction, normalization, and delivery to OW |
 | Infrastructure | Docker, networks, proxy, secrets, backups, and versions |
-| Authentik | OIDC identity and authentication |
+| Authentik (future production contract) | OIDC identity and authentication |
 
 The application repository must not depend on absolute paths, host names, or
 variables that exist only in one installation.
@@ -1816,7 +1910,7 @@ Record technical metrics only:
 
 - BFF latency.
 - Errors by operation.
-- Authentik status.
+- Future production Authentik status.
 - Open Wearables status.
 - Import duration.
 - Accepted, rejected, and duplicate records.
@@ -1842,9 +1936,15 @@ data.
 
 ## 21. Tests
 
+[FIXED] The lists below are the test catalog, not a requirement to run every
+test for every small local change. In `local/personal` mode, select focused
+tests, the relevant full suite, and boundary checks proportional to the changed
+package. The production/release mode uses the stronger complete test and
+deployment gates.
+
 ### 21.1 Unit Tests
 
-- OIDC validation.
+- Future production OIDC validation.
 - Identity resolution.
 - Authorization.
 - User mapping.
@@ -1871,7 +1971,7 @@ data.
 ### 21.3 Integration
 
 - Complete login.
-- OIDC callback.
+- Future production OIDC callback.
 - Session expiration.
 - Logout.
 - Pending user.
@@ -1880,7 +1980,7 @@ data.
 - User A without access to user B.
 - Admin with audited access.
 - Open Wearables unavailable.
-- Authentik unavailable.
+- Future production Authentik unavailable.
 - Partial import.
 - Idempotent retry.
 - Migration and rollback.
@@ -1927,9 +2027,15 @@ Validate:
 
 ---
 
-## 22. Criteria for Starting the Web App
+## 22. Criteria for Production/Release OW Integration
 
-Real web-app integration must not begin until Open Wearables meets:
+[FIXED] The criteria in this section gate production/release integration and
+deployment. They are not a prerequisite for the synthetic slice or an explicit
+loopback-only local read milestone. A local observation remains development
+evidence and must not be presented as a release, public API, or production
+capability.
+
+Production/release integration must not begin until Open Wearables meets:
 
 - Fixed and reproducible version.
 - Documented read API.
@@ -1950,10 +2056,11 @@ Real web-app integration must not begin until Open Wearables meets:
 The UI may be prototyped earlier with fixtures, but must not be coupled to a
 contract that is still changing.
 
-`[FIXED]` This gate applies to integration of a real OW instance and deployment,
-not to the synthetic first slice. The slice may start with the fixture adapter
-and must make visible which part is a BFF contract, which part is an observed OW
-route, and which part remains unverified.
+`[FIXED]` This gate applies to production/release integration of a real OW
+instance and deployment, not to the synthetic first slice or the local read
+milestone. The local slice must still make visible which part is a BFF
+contract, which part is an observed OW route, and which part remains
+unverified.
 
 ---
 
@@ -1996,6 +2103,53 @@ connect to a real instance or write health data:
 - Create synthetic fixtures.
 - Fix the OW version.
 
+### Phase 0B. First Real-Data Read Milestone
+
+[FIXED] After the synthetic slice and its local checks, the first real-data
+milestone is read-only OW summary/source data through the BFF to the existing
+UI. It is a local development observation, not a release or production
+integration.
+
+#### Local Read Milestone Minimum
+
+[FIXED] Other Phase 0 work and production/release gates are not prerequisites
+for this local milestone. It requires:
+
+- Authorized ownership for the server-side OW owner reference before every read;
+  the browser cannot choose the target user.
+- Server-side API-only reads through allowlisted OW HTTP routes; the browser
+  uses relative BFF routes and never reaches OW directly.
+- BFF sanitization that emits only allowlisted, aggregated, PII-free fields;
+  raw metadata, messages, errors, and payloads remain `raw_not_public`.
+- Focused UI contract/readback tests covering the BFF view model and the
+  authorized read responses, including the required positive and negative
+  states.
+- A read-only boundary: no health writes, imports, maps, or production claims.
+
+[PENDING] Local behavior, the OW/parser pin, and compatibility remain
+development evidence until the production/release gates below are independently
+closed.
+
+#### Local Read Milestone Boundaries
+
+- Use only the explicit loopback-only dev/test access mode while the future
+  production OIDC contract remains disabled and unwired; configure the owner
+  reference and OW credential server-side.
+- Keep the browser on relative BFF routes and do not expose API keys, user IDs,
+  owner references, credentials, or internal URLs.
+- Do not write health facts, import, retry, edit, delete, draw maps, or publish
+  production claims in this milestone.
+- Keep the exact OW reference, authorized response, ownership, sanitization, and
+  compatibility evidence classified as `[PENDING]` until independently verified.
+
+#### Production/Release OW Stabilization Gates
+
+[FIXED] Production/release integration additionally requires an immutable,
+compatible OW and Gadgetbridge-OW reference, with the adapter, BFF, UI contract,
+and compatibility evidence checked against those references. It also requires
+the stronger review, migration, backup/restore, rollback, and deployment gates
+described by this plan's `production/release` workflow.
+
 ### Phase 1. Application Foundation
 
 - Create the repository.
@@ -2007,13 +2161,17 @@ connect to a real instance or write health data:
 - Implement the OW client.
 - Implement error handling.
 
-### Phase 2. Identity and Access
+### Phase 2. Identity and Access (Future Production Contract)
 
-- Configure OIDC.
+[PENDING] Keep the future production Authentik/OIDC contract disabled and
+unwired until the first real-data read milestone is complete and a separate
+production decision authorizes this phase.
+
+- Configure the future production OIDC contract.
 - Implement sessions.
 - Implement the local root admin.
 - Create the user model.
-- Create OIDC-OW mapping.
+- Create the future production OIDC-OW mapping.
 - Implement roles.
 - Implement auditing.
 - Test isolation.
@@ -2208,7 +2366,7 @@ Technical metrics:
 
 - Latency by endpoint.
 - Errors by dependency.
-- OIDC status.
+- Future production OIDC status.
 - OW status.
 - Import duration.
 - Processed records.
@@ -2231,6 +2389,11 @@ Never send to observability:
 ---
 
 ## 27. Backups and Recovery
+
+[PENDING] This section is a production/release gate. Backup, restore, and
+rollback evidence is required before production or deployment, not for every
+small local fixture or loopback-only read change. Local work must remain
+disposable and must not use real data in the repository.
 
 ### 27.1 Open Wearables
 
@@ -2379,7 +2542,7 @@ Do not copy personal data into tests, documentation, or messages.
 | P-02 | Extensions included in the first version | High |
 | P-03 | Custom fork or initial upstream contribution | High |
 | P-04 | Final user-provisioning method | High |
-| P-05 | Use of OIDC groups for roles | Medium |
+| P-05 | Use of OIDC groups for future production roles | Medium |
 | P-06 | Technical database engine and location | Medium |
 | P-07 | Raw-artifact retention policy | High |
 | P-08 | GPS-route retention policy | High |
@@ -2402,13 +2565,13 @@ the working direction derived from current evidence:
 
 | ID | Current state | Working direction and pending item |
 |---|---|---|
-| P-01 | `[PENDING]` | The local fork commit is only a development baseline. Choose a clean commit, immutable tag/release, or digest before integrating real OW or deploying. |
+| P-01 | `[PENDING]` | The local fork commit is only a development baseline. Choose a clean commit, immutable tag/release, or digest before production/release integration or deploying. |
 | P-02 | `[PROPOSED]` | The first slice limits the UI to activity, sleep, recovery, body relative to `now`, basic workouts, sources, coverage, and runs. Internal extensions without a public API remain outside the browser until formalized. |
 | P-03 | `[PROPOSED]` | Continue in the local fork for development and testing. Upstream contribution and the final extension-maintenance model remain open; neither is assumed to be a user decision. |
 | P-10 | `[PROPOSED]` | To build now, the source is a synthetic-fixture adapter. Later real integration must verify Gadgetbridge-OW, its mappings, and its sync contract before fixing MVP sources. |
 | P-11 | `[PENDING]` | The observed parser emits active calories as `ACTIVE_CALORIES_BURNED` and marks the daily total when applicable. The canonical definition of active, basal, and total calories remains pending; the UI must not mix or infer them. |
 | P-14 | `[PENDING]` | Comparisons are not implemented in the first slice. Before defining a comparable workout, resolve normalized/raw type, source, units, quality, measured/derived metrics, and public access to detail. |
-| P-17 | `[PENDING]` | Gadgetbridge-OW remains in an observed local state; fix its commit/tag/release and remove or block any `--ow-db-url`/SQL helper from the normal path before real integration. |
+| P-17 | `[PENDING]` | Gadgetbridge-OW remains in an observed local state; fix its commit/tag/release and remove or block any `--ow-db-url`/SQL helper from the normal path before production/release integration. |
 
 `[PENDING]` Current Gadgetbridge mappings are an observation of code and tests,
 not a final product-semantics decision. In particular, `pool_swimming`,
@@ -2442,9 +2605,10 @@ A feature is complete when:
 These rules must not be broken without an explicit decision:
 
 1. Open Wearables is the canonical source of normalized health data.
-2. Authentik is the OIDC identity authority.
+2. The future production Authentik/OIDC contract is the identity authority; it
+   remains disabled and unwired for local read-only milestones.
 3. The local root admin is an application recovery account, not a shared identity.
-4. `issuer + subject` identifies an OIDC user.
+4. `issuer + subject` identifies a future production OIDC user.
 5. The BFF derives the user from the session.
 6. The frontend never decides which OW user to query.
 7. The OW API key never reaches the browser.
@@ -2473,20 +2637,24 @@ These rules must not be broken without an explicit decision:
 
 1. Consolidate evidence, provenance, public limits, and links to contracts and
    fixtures in this plan.
-2. Create a reproducible local-fork baseline: clean commit, immutable
-   tag/release or digest, version manifest, and compatibility test.
-3. Build the first-slice mixed fixture for activity, sleep, recovery, body
+2. Build the first-slice mixed fixture for activity, sleep, recovery, body
    relative to `now`, basic workouts, sources, coverage, sync/runs, and all
    required states.
-4. Implement the BFF read-only health contract with respect to OW and its
+3. Implement the BFF read-only health contract with respect to OW and its
    adapter, hiding OW IDs, credentials, internal paths, and non-allowlisted
    metadata; the `POST` for `VerificationRun` writes BFF control-plane only.
-5. Implement unit, contract, integration, and UI/Playwright fixture tests,
-   including `null`, zero, `empty`, `partial`, `unsupported`, `pending`, errors,
-   and `isDailyTotal`.
-6. Only afterward, integrate real OW and Gadgetbridge-OW against the reproducible
-   baseline, validate persistence/response, and record differences as contract
-   or pending items.
+4. Implement focused unit, contract, integration, and UI/fixture tests as the
+   changed packages require, including `null`, zero, `empty`, `partial`,
+   `unsupported`, `pending`, errors, and `isDailyTotal` where applicable.
+5. Reach the first real-data milestone through the BFF: read-only OW
+   summary/source data in the existing UI, using only the loopback-only
+   dev/test mode while the future production OIDC contract remains disabled and
+   unwired; record differences as contract or pending items.
+6. For production/release, create or verify the immutable OW/parser/application
+   references, compatibility evidence, backup/restore, rollback, and deployment
+   gates. Only afterward, and through a separate production decision, implement
+   the Authentik/OIDC future contract. Do not add health writes, imports, maps,
+   or production claims to the first real-data milestone.
 
 ### 32.2 Expanded Later Backlog
 
@@ -2502,7 +2670,7 @@ These rules must not be broken without an explicit decision:
 9. Create the application repository.
 10. Create development Compose.
 11. Implement the BFF OW client.
-12. Implement OIDC with a test Authentik provider.
+12. Implement the future production OIDC contract with a test Authentik provider.
 13. Implement the local root admin.
 14. Implement manual user mapping.
 15. Implement the MVP dashboard.
@@ -2512,33 +2680,36 @@ These rules must not be broken without an explicit decision:
 
 ### 32.3 Subagent Implementation Workflow
 
-`[FIXED]` The primary agent coordinates scope, maintains the evidence matrix,
-integrates handoffs, and communicates results. The primary agent does not
-directly perform implementation, tests, diff review, the privacy pass, or final
-validation; each activity is delegated to an agent independent of the author.
-Tasks use an explicit list of permitted files and acceptance criteria:
+`[FIXED]` Exactly one top-level subagent layer is allowed. Every delegated
+assignment uses `subagent_depth: 1`; subagents execute their assigned scope
+directly and never call `Task`, create nested agents, or delegate further.
 
-1. One subagent prepares or updates the adapter and synthetic OW fixtures.
-2. One subagent implements the BFF's read-only health reads with respect to OW,
-   its transformations, and the idempotent BFF-owned `VerificationRun`.
-3. One subagent implements the first-slice UI and its responsive/accessible
-   states.
-4. One subagent adds unit, contract, integration, and Playwright tests.
-5. An independent reviewer reviews the diff and evidence without implementing
-   the change.
-6. An independent auditor reviews privacy, raw metadata, paths, secrets, and
-   fixtures.
-7. An independent validator performs final validation and confirms closing
-   criteria.
-8. A later subagent validates OW/Gadgetbridge integration only after the
-   reproducible baseline exists.
+#### Local/Personal Mode
 
-Do not edit the same file in parallel. Each subagent works on a disjoint file
-scope; `docs/PROJECT_PLAN.md` has one editor, the primary agent. Agents may
-analyze interfaces in parallel, but a dependency or conflict is returned to the
-primary for sequential integration. The primary integrates only after receiving
-the handoffs and does not replace the reviewer, privacy auditor, or final
-validator.
+The coordinator assigns one implementation subagent with an explicit file
+scope, input/output contract, privacy boundary, evidence classification, and
+verification commands. After its handoff, the coordinator assigns one
+independent validation subagent. That validator reads the diff and evidence and
+combines correctness, privacy, and final-scope checks in one handoff.
+
+Dependent work is sequential and the coordinator does not parallelize it or
+reopen a passed gate without a new relevant change. If validation finds a
+blocker, allow at most one targeted fix and one revalidation round. If the
+blocker remains, stop and report it rather than starting an endless review loop.
+
+#### Production/Release Mode
+
+`[FIXED]` An explicit production/release decision activates separate sequential
+correctness, privacy, and final reviews. It also requires the immutable
+OW/parser/application references, reviewed migrations, backup and restore
+evidence, documented rollback, deployment checks, and compatibility evidence.
+These stronger gates are not mandatory for every local change, but missing
+production evidence remains `[PENDING]`.
+
+Each file has one owner at a time. Dependent tasks wait for the previous
+handoff; a blocked subagent reports the blocker instead of creating a new task.
+The coordinator integrates handoffs and never promotes fixture or local
+observations to a public API or production claim.
 
 Do not implement AI or advanced comparison before completing these foundations.
 
@@ -2582,12 +2753,13 @@ OW contract
 These references may remain in the public repository:
 
 - Public Open Wearables documentation.
-- Public Authentik OAuth2/OIDC documentation.
+- Public Authentik OAuth2/OIDC documentation for the future production contract.
 - React, Vite, Mantine, and PWA documentation.
 - FastAPI, Pydantic, SQLAlchemy, and Alembic documentation.
 - Docker Compose documentation.
 - Leaflet or MapLibre documentation.
-- Documentation for RFC 3339, OAuth2, OIDC, and PKCE standards.
+- Documentation for RFC 3339, OAuth2, and the future production OIDC/PKCE
+  contract standards.
 
 Do not include references that reveal a specific installation, its hosts, paths,
 accounts, data, or secrets.

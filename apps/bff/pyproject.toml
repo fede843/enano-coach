@@ -5,11 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "enano-coach-bff"
 version = "0.1.0"
-description = "Fixture-backed FastAPI BFF for the Enano Coach verification slice"
+description = "Fixture-backed FastAPI BFF with a gated local OW read adapter"
 requires-python = ">=3.11"
 dependencies = [
+  "alembic>=1.14,<2",
   "fastapi>=0.115,<1",
   "pydantic>=2.0,<3",
+  "psycopg[binary]>=3.2,<4",
+  "SQLAlchemy>=2.0,<3",
 ]
 
 [project.optional-dependencies]

@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from adapter.offline import OfflineFixtureAdapter
+from bff.config import Settings
 from bff.errors import BFFError, error_for
 from bff.main import create_app
 from bff.models import WarningModel
+from bff.session import OwnerContext
 from bff.store import CursorContext, VerificationRunStore
 
 BASE_FIELDS = {
@@ -27,6 +30,16 @@ BASE_FIELDS = {
 def client_for(**kwargs: object) -> TestClient:
     kwargs.setdefault("environment", "test")
     return TestClient(create_app(**kwargs))
+
+
+def dev_client_for(
+    *, client_address: tuple[str, int] = ("127.0.0.1", 50000), **kwargs: object
+) -> TestClient:
+    kwargs.setdefault("environment", "development")
+    kwargs.setdefault("session_mode", "active")
+    kwargs.setdefault("dev_access_enabled", True)
+    kwargs.setdefault("owner_key", "owner-dev-a")
+    return TestClient(create_app(**kwargs), client=client_address)
 
 
 def assert_envelope(payload: dict[str, object], *, error: bool = False) -> None:
@@ -119,9 +132,242 @@ def test_non_active_session_modes_never_query_the_adapter(mode: str) -> None:
     assert calls == []
 
 
+@pytest.mark.parametrize("mode", ["anonymous", "pending", "blocked", "expired"])
+def test_all_protected_operations_short_circuit_before_adapter_access(
+    mode: str,
+) -> None:
+    adapter = OfflineFixtureAdapter()
+    calls: list[str] = []
+    original = adapter.get_bff_response
+
+    def counted(case: str) -> dict[str, object]:
+        calls.append(case)
+        return original(case)
+
+    adapter.get_bff_response = counted  # type: ignore[method-assign]
+    client = client_for(session_mode=mode, adapter=adapter)
+    calls.clear()
+    create_headers = {
+        "Origin": "http://testserver",
+        "Idempotency-Key": "protected-short-circuit",
+    }
+
+    responses = [
+        client.get(
+            "/api/v1/me/verify/overview",
+            params={"date": "2024-01-02", "timezone": "UTC"},
+        ),
+        client.get(
+            "/api/v1/me/verify/sources",
+            params={"date": "2024-01-02", "timezone": "UTC"},
+        ),
+        client.get("/api/v1/me/verify/settings"),
+        client.get("/api/v1/me/verify/runs", params={"limit": 2}),
+        client.get("/api/v1/me/verify/runs/verify-demo-01"),
+        client.post(
+            "/api/v1/me/verify/runs",
+            json=_create_body(),
+            headers=create_headers,
+        ),
+    ]
+
+    assert [response.status_code for response in responses] == (
+        [401, 401, 401, 401, 401, 401]
+        if mode in {"anonymous", "expired"}
+        else [403, 403, 403, 403, 403, 403]
+    )
+    assert calls == []
+
+
+def test_active_owner_success_passes_only_server_derived_context_to_adapter() -> None:
+    adapter = ContextCapturingAdapter()
+    client = client_for(
+        session_mode="active",
+        session_key="synthetic-session-context",
+        principal_key="principal-demo-a",
+        owner_key="owner-demo-a",
+        ow_user_key="ow-link-demo-a",
+        adapter=adapter,
+    )
+
+    response = client.get(
+        "/api/v1/me/verify/overview",
+        params={"date": "2024-01-02", "timezone": "UTC"},
+        headers={
+            "X-BFF-Owner": "browser-controlled-owner",
+            "X-OW-User-Key": "browser-controlled-ow-link",
+            "X-OW-URL": "browser-controlled-url",
+            "Authorization": "browser-controlled-credential",
+        },
+    )
+
+    assert response.status_code == 200
+    assert adapter.contexts
+    context = adapter.contexts[0]
+    assert context.principal_key == "principal-demo-a"
+    assert context.owner_key == "owner-demo-a"
+    assert context.ow_user_key == "ow-link-demo-a"
+    assert "owner-demo-a" not in repr(response.json())
+    assert "ow-link-demo-a" not in repr(response.json())
+
+
 def test_invalid_server_session_mode_fails_closed() -> None:
     with pytest.raises(ValueError):
         create_app(session_mode="not-a-session-mode")
+
+
+def test_disabled_development_access_preserves_fixture_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("BFF_DEV_ACCESS_ENABLED", raising=False)
+    settings = Settings.from_environment(environment="test", session_mode="active")
+    assert settings.dev_access_enabled is False
+
+    client = TestClient(
+        create_app(environment="test", session_mode="active"),
+        client=("203.0.113.10", 50000),
+    )
+
+    assert client.get("/api/v1/session").status_code == 200
+
+
+def test_development_access_requires_a_server_configured_owner() -> None:
+    with pytest.raises(ValueError, match="BFF_SYNTHETIC_OWNER_KEY"):
+        create_app(
+            environment="development",
+            session_mode="active",
+            dev_access_enabled=True,
+        )
+
+
+def test_development_access_reads_server_settings_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BFF_ENVIRONMENT", "development")
+    monkeypatch.setenv("BFF_DEV_ACCESS_ENABLED", "true")
+    monkeypatch.setenv("BFF_SYNTHETIC_OWNER_KEY", "owner-dev-env")
+
+    client = TestClient(
+        create_app(session_mode="active"),
+        client=("127.0.0.1", 50000),
+    )
+
+    assert client.get("/api/v1/session").status_code == 200
+
+
+def test_development_access_redacts_owner_context_and_settings_repr() -> None:
+    client = dev_client_for(
+        principal_key="principal-dev-a",
+        owner_key="owner-dev-a",
+        ow_user_key="ow-link-dev-a",
+    )
+
+    context = client.app.state.service.session.owner_context
+    assert context is not None
+    assert "principal-dev-a" not in repr(context)
+    assert "owner-dev-a" not in repr(context)
+    assert "ow-link-dev-a" not in repr(context)
+    assert "owner-dev-a" not in repr(client.app.state.service.settings)
+
+
+@pytest.mark.parametrize(
+    "environment", ["local", "production", "staging", "test-server"]
+)
+def test_development_access_rejects_non_development_test_environments(
+    environment: str,
+) -> None:
+    with pytest.raises(ValueError, match="development or test"):
+        create_app(
+            environment=environment,
+            session_mode="active",
+            dev_access_enabled=True,
+            owner_key="owner-dev-a",
+        )
+
+
+def test_development_access_requires_an_explicit_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("BFF_ENVIRONMENT", raising=False)
+
+    with pytest.raises(ValueError, match="BFF_ENVIRONMENT"):
+        create_app(
+            session_mode="active",
+            dev_access_enabled=True,
+            owner_key="owner-dev-a",
+        )
+
+
+@pytest.mark.parametrize("client_address", [("127.0.0.1", 50000), ("::1", 50000)])
+def test_development_access_accepts_loopback_client_and_allowed_origin(
+    client_address: tuple[str, int],
+) -> None:
+    client = dev_client_for(client_address=client_address)
+
+    response = client.get(
+        "/api/v1/session",
+        headers={"Origin": "http://testserver"},
+    )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "client_address", [("203.0.113.10", 50000), ("testclient", 50000)]
+)
+def test_development_access_rejects_non_loopback_clients(
+    client_address: tuple[str, int],
+) -> None:
+    client = dev_client_for(client_address=client_address)
+
+    response = client.get("/api/v1/session")
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+    assert client_address[0] not in repr(response.json())
+
+
+def test_development_access_rejects_disallowed_origin() -> None:
+    client = dev_client_for()
+
+    response = client.get(
+        "/api/v1/session",
+        headers={"Origin": "http://outside.example.test"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+    assert "outside.example.test" not in repr(response.json())
+
+
+def test_development_access_uses_only_server_derived_owner_context() -> None:
+    adapter = ContextCapturingAdapter()
+    client = dev_client_for(
+        principal_key="principal-dev-a",
+        owner_key="owner-dev-a",
+        ow_user_key="ow-link-dev-a",
+        adapter=adapter,
+    )
+
+    response = client.get(
+        "/api/v1/me/verify/overview",
+        params={"date": "2024-01-02", "timezone": "UTC"},
+        headers={
+            "X-BFF-Owner": "browser-controlled-owner",
+            "X-OW-User-Key": "browser-controlled-ow-link",
+            "X-OW-URL": "browser-controlled-url",
+            "Authorization": "browser-controlled-credential",
+        },
+    )
+
+    assert response.status_code == 200
+    assert adapter.contexts
+    context = adapter.contexts[0]
+    assert context.principal_key == "principal-dev-a"
+    assert context.owner_key == "owner-dev-a"
+    assert context.ow_user_key == "ow-link-dev-a"
+    assert "owner-dev-a" not in repr(response.json())
+    assert "ow-link-dev-a" not in repr(response.json())
 
 
 def test_active_overview_preserves_scalar_heart_rate_and_builds_local_window() -> None:
@@ -554,6 +800,12 @@ def test_store_idempotency_lookup_normalizes_scope_domains() -> None:
     )
 
     assert created is True
+    assert isinstance(record.idempotency_scope(), tuple)
+    assert record.idempotency_scope() == (
+        "2024-01-02",
+        "UTC",
+        ("activity", "sleep"),
+    )
     replay = store.lookup_idempotency(
         owner_session_key=owner,
         scope_date="2024-01-02",
@@ -839,6 +1091,855 @@ def test_detail_is_owned_by_the_server_selected_session() -> None:
     assert other_detail.json()["error"]["code"] == "RUN_NOT_FOUND"
 
 
+def test_foreign_run_is_404_and_does_not_call_adapter_for_another_ow_link() -> None:
+    shared_store = VerificationRunStore()
+    owner = client_for(
+        session_mode="active",
+        session_key="synthetic-session-shared",
+        owner_key="owner-demo-a",
+        ow_user_key="ow-link-demo-a",
+        store=shared_store,
+    )
+    own_detail = owner.get("/api/v1/me/verify/runs/verify-demo-02")
+    assert own_detail.status_code == 200
+
+    adapter = OfflineFixtureAdapter()
+    calls: list[str] = []
+    original = adapter.get_bff_response
+
+    def counted(case: str) -> dict[str, object]:
+        calls.append(case)
+        return original(case)
+
+    adapter.get_bff_response = counted  # type: ignore[method-assign]
+    foreign = client_for(
+        session_mode="active",
+        session_key="synthetic-session-shared",
+        owner_key="owner-demo-b",
+        ow_user_key="ow-link-demo-b",
+        adapter=adapter,
+        store=shared_store,
+    )
+    seeded = foreign.get("/api/v1/me/verify/runs", params={"limit": 100})
+    assert seeded.status_code == 200
+    calls.clear()
+
+    response = foreign.get("/api/v1/me/verify/runs/verify-demo-02")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "RUN_NOT_FOUND"
+    assert "owner-demo-a" not in repr(response.json())
+    assert "ow-link-demo-a" not in repr(response.json())
+    assert calls == []
+
+
+def test_unseeded_foreign_detail_returns_404_without_seeding_or_adapter_access() -> (
+    None
+):
+    shared_store = VerificationRunStore()
+    owner = client_for(
+        session_mode="active",
+        session_key="synthetic-session-detail-owner",
+        owner_key="owner-demo-detail-a",
+        ow_user_key="ow-link-demo-detail-a",
+        store=shared_store,
+    )
+    seeded = owner.get("/api/v1/me/verify/runs", params={"limit": 100})
+    assert seeded.status_code == 200
+
+    adapter = OfflineFixtureAdapter()
+    calls: list[str] = []
+    original = adapter.get_bff_response
+
+    def counted(case: str) -> dict[str, object]:
+        calls.append(case)
+        return original(case)
+
+    adapter.get_bff_response = counted  # type: ignore[method-assign]
+    foreign = client_for(
+        session_mode="active",
+        session_key="synthetic-session-detail-foreign",
+        owner_key="owner-demo-detail-b",
+        ow_user_key="ow-link-demo-detail-b",
+        adapter=adapter,
+        store=shared_store,
+    )
+    calls.clear()
+
+    response = foreign.get("/api/v1/me/verify/runs/verify-demo-02")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "RUN_NOT_FOUND"
+    assert (
+        shared_store.is_seeded(
+            "synthetic-session-detail-foreign",
+            "owner-demo-detail-b",
+            "ow-link-demo-detail-b",
+        )
+        is False
+    )
+    assert calls == []
+
+
+def test_cross_owner_cursor_is_rejected_before_adapter_access() -> None:
+    shared_store = VerificationRunStore()
+    owner = client_for(
+        session_mode="active",
+        session_key="synthetic-session-shared",
+        owner_key="owner-demo-a",
+        ow_user_key="ow-link-demo-a",
+        store=shared_store,
+    )
+    first = owner.get("/api/v1/me/verify/runs", params={"limit": 2})
+    assert first.status_code == 200
+    cursor = first.json()["data"]["page"]["nextCursor"]
+
+    adapter = OfflineFixtureAdapter()
+    calls: list[str] = []
+    original = adapter.get_bff_response
+
+    def counted(case: str) -> dict[str, object]:
+        calls.append(case)
+        return original(case)
+
+    adapter.get_bff_response = counted  # type: ignore[method-assign]
+    foreign = client_for(
+        session_mode="active",
+        session_key="synthetic-session-shared",
+        owner_key="owner-demo-b",
+        ow_user_key="ow-link-demo-b",
+        adapter=adapter,
+        store=shared_store,
+    )
+    calls.clear()
+
+    response = foreign.get(
+        "/api/v1/me/verify/runs",
+        params={"limit": 2, "cursor": cursor},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "CURSOR_CONTEXT_MISMATCH"
+    assert calls == []
+
+
+def test_idempotency_scope_is_bound_to_owner_even_when_session_keys_match() -> None:
+    shared_store = VerificationRunStore()
+    body = _create_body(domains=["activity", "sleep"])
+    headers = {
+        "Origin": "http://testserver",
+        "Idempotency-Key": "same-owner-independent-key",
+    }
+    owner_a = client_for(
+        session_mode="active",
+        session_key="synthetic-session-shared",
+        owner_key="owner-demo-a",
+        ow_user_key="ow-link-demo-a",
+        store=shared_store,
+    )
+    owner_b = client_for(
+        session_mode="active",
+        session_key="synthetic-session-shared",
+        owner_key="owner-demo-b",
+        ow_user_key="ow-link-demo-b",
+        store=shared_store,
+    )
+
+    created_a = owner_a.post("/api/v1/me/verify/runs", json=body, headers=headers)
+    created_b = owner_b.post("/api/v1/me/verify/runs", json=body, headers=headers)
+    replayed_b = owner_b.post("/api/v1/me/verify/runs", json=body, headers=headers)
+
+    assert created_a.status_code == 202
+    assert created_b.status_code == 202
+    assert replayed_b.status_code == 202
+    assert (
+        created_a.json()["data"]["verificationRun"]["runKey"]
+        != created_b.json()["data"]["verificationRun"]["runKey"]
+    )
+    assert replayed_b.json()["data"] == created_b.json()["data"]
+
+    conflict = owner_b.post(
+        "/api/v1/me/verify/runs",
+        json={**body, "date": "2024-01-03"},
+        headers=headers,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+
+def test_ow_link_rebinding_isolates_seeded_runs_cursors_and_idempotency() -> None:
+    shared_store = VerificationRunStore()
+    owner_a = client_for(
+        session_mode="active",
+        session_key="synthetic-session-link-rebind",
+        owner_key="owner-demo-link-rebind",
+        ow_user_key="ow-link-demo-rebind-a",
+        store=shared_store,
+    )
+    first_a = owner_a.get(
+        "/api/v1/me/verify/runs", params={"limit": 2, "timezone": "UTC"}
+    )
+    assert first_a.status_code == 200
+    cursor_a = first_a.json()["data"]["page"]["nextCursor"]
+    assert isinstance(cursor_a, str)
+    keys_a = {item["runKey"] for item in first_a.json()["data"]["items"]}
+
+    adapter_b = OfflineFixtureAdapter()
+    calls: list[str] = []
+    original = adapter_b.get_bff_response
+
+    def counted(case: str) -> dict[str, object]:
+        calls.append(case)
+        return original(case)
+
+    adapter_b.get_bff_response = counted  # type: ignore[method-assign]
+    owner_b = client_for(
+        session_mode="active",
+        session_key="synthetic-session-link-rebind",
+        owner_key="owner-demo-link-rebind",
+        ow_user_key="ow-link-demo-rebind-b",
+        adapter=adapter_b,
+        store=shared_store,
+    )
+
+    second_b = owner_b.get(
+        "/api/v1/me/verify/runs", params={"limit": 100, "timezone": "UTC"}
+    )
+    assert second_b.status_code == 200
+    keys_b = {item["runKey"] for item in second_b.json()["data"]["items"]}
+    assert keys_a.isdisjoint(keys_b)
+    assert calls
+
+    calls.clear()
+    rebound_cursor = owner_b.get(
+        "/api/v1/me/verify/runs",
+        params={"limit": 2, "timezone": "UTC", "cursor": cursor_a},
+    )
+    assert rebound_cursor.status_code == 400
+    assert rebound_cursor.json()["error"]["code"] == "CURSOR_CONTEXT_MISMATCH"
+    assert calls == []
+
+    body = _create_body(domains=["activity", "sleep"])
+    headers = {
+        "Origin": "http://testserver",
+        "Idempotency-Key": "link-rebind-idempotency",
+    }
+    created_a = owner_a.post("/api/v1/me/verify/runs", json=body, headers=headers)
+    created_b = owner_b.post("/api/v1/me/verify/runs", json=body, headers=headers)
+    assert created_a.status_code == 202
+    assert created_b.status_code == 202
+    assert created_a.json()["data"] != created_b.json()["data"]
+
+
+def test_delimiter_containing_owner_and_session_scopes_do_not_collide() -> None:
+    shared_store = VerificationRunStore()
+    body = _create_body(domains=["activity", "sleep"])
+    headers = {
+        "Origin": "http://testserver",
+        "Idempotency-Key": "delimiter-scope-key",
+    }
+    owner_a = client_for(
+        session_mode="active",
+        session_key="session-b::session-c",
+        owner_key="owner-a",
+        ow_user_key="ow-link-a",
+        store=shared_store,
+    )
+    owner_b = client_for(
+        session_mode="active",
+        session_key="session-c",
+        owner_key="owner-a::session-b",
+        ow_user_key="ow-link-b",
+        store=shared_store,
+    )
+
+    created_a = owner_a.post("/api/v1/me/verify/runs", json=body, headers=headers)
+    created_b = owner_b.post("/api/v1/me/verify/runs", json=body, headers=headers)
+    replayed_b = owner_b.post("/api/v1/me/verify/runs", json=body, headers=headers)
+
+    assert created_a.status_code == 202
+    assert created_b.status_code == 202
+    assert replayed_b.status_code == 202
+    assert (
+        created_a.json()["data"]["verificationRun"]["runKey"]
+        != created_b.json()["data"]["verificationRun"]["runKey"]
+    )
+    assert replayed_b.json()["data"] == created_b.json()["data"]
+    assert set(shared_store._idempotency) == {
+        ("session-b::session-c", "owner-a", "ow-link-a", "delimiter-scope-key"),
+        ("session-c", "owner-a::session-b", "ow-link-b", "delimiter-scope-key"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("owner_session_key", "synthetic-session-other"),
+        ("owner_key", "owner-demo-other"),
+        ("scope_date", "2024-01-03"),
+        ("scope_timezone", "Europe/Madrid"),
+        ("domains", ("sleep",)),
+    ],
+)
+def test_idempotency_replay_revalidates_stored_owner_session_and_scope(
+    field: str, replacement: object
+) -> None:
+    store = VerificationRunStore()
+    owner_session_key = "synthetic-session-replay-validation"
+    owner_key = "owner-demo-replay-validation"
+    record, created = store.create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity", "sleep"),
+        idempotency_key="replay-validation-key",
+    )
+    assert created is True
+    setattr(record, field, replacement)
+
+    for resolver in (
+        store.lookup_idempotency,
+        lambda **kwargs: store.prepare_create(**kwargs)[0],
+    ):
+        with pytest.raises(BFFError) as caught:
+            resolver(
+                owner_session_key=owner_session_key,
+                owner_key=owner_key,
+                scope_date="2024-01-02",
+                scope_timezone="UTC",
+                domains=("activity", "sleep"),
+                idempotency_key="replay-validation-key",
+            )
+        assert caught.value.code == "IDEMPOTENCY_CONFLICT"
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("owner_session_key", "synthetic-session-commit-other"),
+        ("owner_key", "owner-demo-commit-other"),
+        ("idempotency_key", "commit-other-key"),
+        ("scope_date", "2024-01-03"),
+        ("scope_timezone", "Europe/Madrid"),
+        ("domains", ("sleep",)),
+    ],
+)
+def test_commit_rejects_mismatched_prepared_records_without_mutation(
+    field: str, replacement: object
+) -> None:
+    store = VerificationRunStore()
+    owner_session_key = "synthetic-session-commit"
+    owner_key = "owner-demo-commit"
+    record, created = store.prepare_create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity", "sleep"),
+        idempotency_key="commit-key",
+    )
+    assert created is True
+    before = store._snapshot_state()
+    commit_args: dict[str, object] = {
+        "owner_session_key": owner_session_key,
+        "owner_key": owner_key,
+        "idempotency_key": "commit-key",
+        "scope_date": "2024-01-02",
+        "scope_timezone": "UTC",
+        "domains": ("activity", "sleep"),
+        "record": record,
+    }
+    commit_args[field] = replacement
+
+    with pytest.raises(BFFError) as caught:
+        store.commit_create(**commit_args)  # type: ignore[arg-type]
+
+    assert caught.value.code == "IDEMPOTENCY_CONFLICT"
+    assert store._snapshot_state() == before
+    assert store._runs == {}
+    assert store._idempotency == {}
+
+
+def test_commit_rejects_an_orphan_record_without_mutation() -> None:
+    store = VerificationRunStore()
+    prepared, created = store.prepare_create(
+        owner_session_key="synthetic-session-orphan",
+        owner_key="owner-demo-orphan",
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        idempotency_key="orphan-key",
+    )
+    assert created is True
+    orphan = deepcopy(prepared)
+    before = store._snapshot_state()
+
+    with pytest.raises(BFFError) as caught:
+        store.commit_create(
+            owner_session_key="synthetic-session-orphan",
+            owner_key="owner-demo-orphan",
+            idempotency_key="orphan-key",
+            scope_date="2024-01-02",
+            scope_timezone="UTC",
+            domains=("activity",),
+            record=orphan,
+        )
+
+    assert caught.value.code == "IDEMPOTENCY_CONFLICT"
+    assert store._snapshot_state() == before
+    assert store._runs == {}
+    assert store._idempotency == {}
+
+
+def test_commit_rejects_a_rebound_prepared_record_even_when_arguments_follow_it() -> (
+    None
+):
+    store = VerificationRunStore()
+    record, created = store.prepare_create(
+        owner_session_key="synthetic-session-rebound",
+        owner_key="owner-demo-rebound",
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        idempotency_key="rebound-key",
+    )
+    assert created is True
+    record.owner_session_key = "synthetic-session-rebound-other"
+    record.owner_key = "owner-demo-rebound-other"
+    record.idempotency_key = "rebound-other-key"
+    record.scope_date = "2024-01-03"
+    record.scope_timezone = "Europe/Madrid"
+    record.domains = ("sleep",)
+    before = store._snapshot_state()
+
+    with pytest.raises(BFFError) as caught:
+        store.commit_create(
+            owner_session_key="synthetic-session-rebound-other",
+            owner_key="owner-demo-rebound-other",
+            idempotency_key="rebound-other-key",
+            scope_date="2024-01-03",
+            scope_timezone="Europe/Madrid",
+            domains=("sleep",),
+            record=record,
+        )
+
+    assert caught.value.code == "IDEMPOTENCY_CONFLICT"
+    assert store._snapshot_state() == before
+    assert store._runs == {}
+    assert store._idempotency == {}
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("owner_session_key", "synthetic-session-rollback-other"),
+        ("owner_key", "owner-demo-rollback-other"),
+        ("idempotency_key", "rollback-other-key"),
+        ("scope_date", "2024-01-03"),
+        ("scope_timezone", "Europe/Madrid"),
+        ("domains", ("sleep",)),
+    ],
+)
+def test_rollback_rejects_mismatched_requests_without_mutation(
+    field: str, replacement: object
+) -> None:
+    store = VerificationRunStore()
+    owner_session_key = "synthetic-session-rollback"
+    owner_key = "owner-demo-rollback"
+    record, created = store.create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        idempotency_key="rollback-key",
+    )
+    assert created is True
+    context = CursorContext(
+        session_key=owner_session_key,
+        from_date=None,
+        to_date=None,
+        state=None,
+        limit=1,
+        timezone="UTC",
+        owner_key=owner_key,
+    )
+    cursor = store._register_cursor(context, 0, (record.run_key,))
+    before = store._snapshot_state()
+    rollback_args: dict[str, object] = {
+        "owner_session_key": owner_session_key,
+        "owner_key": owner_key,
+        "idempotency_key": "rollback-key",
+        "scope_date": "2024-01-02",
+        "scope_timezone": "UTC",
+        "domains": ("activity",),
+        "record": record,
+    }
+    rollback_args[field] = replacement
+
+    with pytest.raises(BFFError) as caught:
+        store.rollback_create(**rollback_args)  # type: ignore[arg-type]
+
+    assert caught.value.code == "IDEMPOTENCY_CONFLICT"
+    assert store._snapshot_state() == before
+    assert store._runs[record.run_key] is record
+    assert (
+        store._idempotency[(owner_session_key, owner_key, None, "rollback-key")][1]
+        == record.run_key
+    )
+    assert cursor in store._cursors
+
+
+def test_valid_rollback_removes_mapping_and_cursor_references() -> None:
+    store = VerificationRunStore()
+    owner_session_key = "synthetic-session-rollback-valid"
+    owner_key = "owner-demo-rollback-valid"
+    record, created = store.create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        idempotency_key="rollback-valid-key",
+    )
+    assert created is True
+    context = CursorContext(
+        session_key=owner_session_key,
+        from_date=None,
+        to_date=None,
+        state=None,
+        limit=1,
+        timezone="UTC",
+        owner_key=owner_key,
+    )
+    cursor = store._register_cursor(context, 0, (record.run_key,))
+
+    store.rollback_create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        idempotency_key="rollback-valid-key",
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        record=record,
+    )
+
+    assert record.run_key not in store._runs
+    assert store._idempotency == {}
+    assert cursor not in store._cursors
+    with pytest.raises(BFFError) as caught:
+        store.list_page(
+            context=context,
+            from_date=None,
+            to_date=None,
+            state=None,
+            cursor=cursor,
+        )
+    assert caught.value.code == "INVALID_CURSOR"
+
+
+def test_rollback_uses_logical_identity_after_deep_copy_state_restore() -> None:
+    store = VerificationRunStore()
+    owner_session_key = "synthetic-session-rollback-restored"
+    owner_key = "owner-demo-rollback-restored"
+    ow_user_key = "ow-link-demo-rollback-restored"
+    record, created = store.create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        ow_user_key=ow_user_key,
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        idempotency_key="rollback-restored-key",
+    )
+    assert created is True
+    context = CursorContext(
+        session_key=owner_session_key,
+        from_date=None,
+        to_date=None,
+        state=None,
+        limit=1,
+        timezone="UTC",
+        owner_key=owner_key,
+        ow_user_key=ow_user_key,
+    )
+    cursor = store._register_cursor(context, 0, (record.run_key,))
+    snapshot = store._snapshot_state()
+    store._restore_state(snapshot)
+
+    before_mismatch = store._snapshot_state()
+    with pytest.raises(BFFError) as caught:
+        store.rollback_create(
+            owner_session_key=owner_session_key,
+            owner_key=owner_key,
+            ow_user_key="ow-link-demo-rollback-other",
+            idempotency_key="rollback-restored-key",
+            scope_date="2024-01-02",
+            scope_timezone="UTC",
+            domains=("activity",),
+            record=record,
+        )
+    assert caught.value.code == "IDEMPOTENCY_CONFLICT"
+    assert store._snapshot_state() == before_mismatch
+    assert cursor in store._cursors
+
+    store.rollback_create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        ow_user_key=ow_user_key,
+        idempotency_key="rollback-restored-key",
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        record=record,
+    )
+
+    assert store._runs == {}
+    assert store._idempotency == {}
+    assert store._prepared == {}
+    assert store._prepared_requests == {}
+    assert cursor not in store._cursors
+
+
+def test_rollback_rejects_a_rebound_prepared_record_without_mutation() -> None:
+    store = VerificationRunStore()
+    record, created = store.prepare_create(
+        owner_session_key="synthetic-session-rollback-rebound",
+        owner_key="owner-demo-rollback-rebound",
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        idempotency_key="rollback-rebound-key",
+    )
+    assert created is True
+    record.owner_session_key = "synthetic-session-rollback-rebound-other"
+    record.owner_key = "owner-demo-rollback-rebound-other"
+    record.idempotency_key = "rollback-rebound-other-key"
+    record.scope_date = "2024-01-03"
+    record.scope_timezone = "Europe/Madrid"
+    record.domains = ("sleep",)
+    before = store._snapshot_state()
+
+    with pytest.raises(BFFError) as caught:
+        store.rollback_create(
+            owner_session_key="synthetic-session-rollback-rebound-other",
+            owner_key="owner-demo-rollback-rebound-other",
+            idempotency_key="rollback-rebound-other-key",
+            scope_date="2024-01-03",
+            scope_timezone="Europe/Madrid",
+            domains=("sleep",),
+            record=record,
+        )
+
+    assert caught.value.code == "IDEMPOTENCY_CONFLICT"
+    assert store._snapshot_state() == before
+    assert store._runs == {}
+    assert store._idempotency == {}
+
+
+def test_reseeding_a_shared_context_is_idempotent_but_other_context_gets_own_data() -> (
+    None
+):
+    store = VerificationRunStore()
+    adapter = OfflineFixtureAdapter()
+    session_key = "synthetic-session-shared-seed"
+
+    store.seed_from_adapter(
+        adapter,
+        session_key,
+        owner_key="owner-demo-seed-a",
+    )
+    before = store._snapshot_state()
+    store.seed_from_adapter(
+        adapter,
+        session_key,
+        owner_key="owner-demo-seed-a",
+    )
+    assert store._snapshot_state() == before
+
+    store.seed_from_adapter(
+        adapter,
+        session_key,
+        owner_key="owner-demo-seed-b",
+    )
+
+    assert store._snapshot_state() != before
+    owner_a_records = {
+        record.run_key
+        for record in store._runs.values()
+        if record.owner_session_key == session_key
+        and record.owner_key == "owner-demo-seed-a"
+    }
+    owner_b_records = {
+        record.run_key
+        for record in store._runs.values()
+        if record.owner_session_key == session_key
+        and record.owner_key == "owner-demo-seed-b"
+    }
+    assert len(owner_a_records) == 8
+    assert len(owner_b_records) == 8
+    assert owner_a_records.isdisjoint(owner_b_records)
+    assert {
+        (record.owner_session_key, record.owner_key) for record in store._runs.values()
+    } == {
+        (session_key, "owner-demo-seed-a"),
+        (session_key, "owner-demo-seed-b"),
+    }
+
+
+def test_service_reseeds_when_the_server_owner_context_changes() -> None:
+    client = client_for(
+        session_mode="active",
+        session_key="synthetic-session-context-switch",
+        owner_key="owner-demo-context-a",
+        ow_user_key="ow-link-demo-context-a",
+    )
+
+    first = client.get("/api/v1/me/verify/runs", params={"limit": 100})
+    assert first.status_code == 200
+    first_keys = {item["runKey"] for item in first.json()["data"]["items"]}
+
+    service = client.app.state.service
+    service.session = replace(
+        service.session,
+        owner_context=OwnerContext(
+            principal_key="principal-demo-context-b",
+            owner_key="owner-demo-context-b",
+            ow_user_key="ow-link-demo-context-b",
+        ),
+    )
+
+    second = client.get("/api/v1/me/verify/runs", params={"limit": 100})
+    assert second.status_code == 200
+    second_keys = {item["runKey"] for item in second.json()["data"]["items"]}
+
+    assert len(first_keys) == 4
+    assert len(second_keys) == 4
+    assert first_keys.isdisjoint(second_keys)
+
+
+def test_seeding_does_not_overwrite_a_prepared_run_key() -> None:
+    store = VerificationRunStore()
+    owner_session_key = "synthetic-session-prepared-seed-collision"
+    owner_key = "owner-demo-prepared-seed-collision"
+    prepared, created = store.prepare_create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        idempotency_key="prepared-seed-collision-key",
+    )
+    assert created is True
+    assert prepared.run_key == "verify-demo-01"
+
+    store.seed_from_adapter(
+        OfflineFixtureAdapter(),
+        owner_session_key,
+        owner_key=owner_key,
+    )
+
+    assert store._prepared[prepared.run_key] is prepared
+    assert prepared.run_key not in store._runs
+    assert all(record.run_key != prepared.run_key for record in store._runs.values())
+
+
+def test_seeding_does_not_overwrite_a_committed_scope_or_idempotency_record() -> None:
+    store = VerificationRunStore()
+    owner_session_key = "synthetic-session-committed-seed-collision"
+    owner_key = "owner-demo-committed-seed-collision"
+    store.create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        scope_date="2024-01-01",
+        scope_timezone="UTC",
+        domains=("activity",),
+        idempotency_key="committed-seed-collision-a",
+    )
+    committed, created = store.create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("sleep",),
+        idempotency_key="committed-seed-collision-b",
+    )
+    assert created is True
+    assert committed.run_key == "verify-demo-02"
+
+    store.seed_from_adapter(
+        OfflineFixtureAdapter(),
+        owner_session_key,
+        owner_key=owner_key,
+    )
+
+    replay = store.lookup_idempotency(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("sleep",),
+        idempotency_key="committed-seed-collision-b",
+    )
+    assert replay is committed
+    assert committed.state == "pending"
+    assert committed.scope() == {
+        "date": "2024-01-02",
+        "timezone": "UTC",
+        "domains": ["sleep"],
+    }
+
+
+def test_two_active_owners_seed_independent_fixture_lists() -> None:
+    shared_store = VerificationRunStore()
+    owner_a = client_for(
+        session_mode="active",
+        session_key="synthetic-session-two-owners",
+        owner_key="owner-demo-two-a",
+        ow_user_key="ow-link-demo-two-a",
+        store=shared_store,
+    )
+    owner_b = client_for(
+        session_mode="active",
+        session_key="synthetic-session-two-owners",
+        owner_key="owner-demo-two-b",
+        ow_user_key="ow-link-demo-two-b",
+        store=shared_store,
+    )
+
+    first = owner_a.get("/api/v1/me/verify/runs", params={"limit": 100})
+    second = owner_b.get("/api/v1/me/verify/runs", params={"limit": 100})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_keys = {item["runKey"] for item in first.json()["data"]["items"]}
+    second_keys = {item["runKey"] for item in second.json()["data"]["items"]}
+    assert len(first_keys) == 4
+    assert len(second_keys) == 4
+    assert first_keys.isdisjoint(second_keys)
+    assert all(
+        shared_store.get(
+            run_key,
+            "synthetic-session-two-owners",
+            owner_key="owner-demo-two-a",
+            ow_user_key="ow-link-demo-two-a",
+        )
+        is not None
+        for run_key in first_keys
+    )
+    assert all(
+        shared_store.get(
+            run_key,
+            "synthetic-session-two-owners",
+            owner_key="owner-demo-two-b",
+            ow_user_key="ow-link-demo-two-b",
+        )
+        is not None
+        for run_key in second_keys
+    )
+
+
 @pytest.mark.parametrize(
     ("stage", "status", "expected"),
     [
@@ -918,6 +2019,18 @@ class TaintedAdapter(OfflineFixtureAdapter):
                 if isinstance(results, list) and results:
                     results[0]["metadata"] = {"payload": "raw"}
         return response
+
+
+class ContextCapturingAdapter:
+    def __init__(self) -> None:
+        self.delegate = OfflineFixtureAdapter()
+        self.contexts: list[OwnerContext] = []
+
+    def get_bff_response(
+        self, case: str, *, owner_context: OwnerContext
+    ) -> dict[str, object]:
+        self.contexts.append(owner_context)
+        return self.delegate.get_bff_response(case)
 
 
 class TaintedErrorAdapter(OfflineFixtureAdapter):
@@ -3441,9 +4554,21 @@ def test_overview_sources_require_source_ambiguity_warning() -> None:
 
 class AlwaysFailingInstallStore(VerificationRunStore):
     def _install_item(
-        self, item: dict[str, object], owner_session_key: str, *, listed: bool
+        self,
+        item: dict[str, object],
+        owner_session_key: str,
+        *,
+        owner_key: str,
+        listed: bool,
+        ow_user_key: str | None = None,
     ) -> None:
-        super()._install_item(item, owner_session_key, listed=listed)
+        super()._install_item(
+            item,
+            owner_session_key,
+            owner_key=owner_key,
+            ow_user_key=ow_user_key,
+            listed=listed,
+        )
         if item["runKey"] == "verify-demo-02":
             raise error_for("UPSTREAM_INVALID")
 
@@ -3475,6 +4600,98 @@ class FailingIdempotencyMap(dict):
         if self.fail_next:
             self.fail_next = False
             raise RuntimeError("synthetic idempotency write failure")
+
+
+class FailingCursorCleanupMap(dict):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.fail_next = True
+
+    def pop(self, key: object, default: object = None) -> object:
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("synthetic cursor cleanup failure")
+        return super().pop(key, default)
+
+
+def test_rollback_cursor_cleanup_is_atomic_on_cleanup_failure() -> None:
+    store = VerificationRunStore()
+    owner_session_key = "synthetic-session-rollback-cleanup"
+    owner_key = "owner-demo-rollback-cleanup"
+    record, created = store.create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        idempotency_key="rollback-cleanup-key",
+    )
+    assert created is True
+    context = CursorContext(
+        session_key=owner_session_key,
+        from_date=None,
+        to_date=None,
+        state=None,
+        limit=1,
+        timezone="UTC",
+        owner_key=owner_key,
+    )
+    cursor = store._register_cursor(context, 0, (record.run_key,))
+    store._cursors = FailingCursorCleanupMap(store._cursors)
+    before = store._snapshot_state()
+
+    with pytest.raises(RuntimeError, match="cursor cleanup"):
+        store.rollback_create(
+            owner_session_key=owner_session_key,
+            owner_key=owner_key,
+            idempotency_key="rollback-cleanup-key",
+            scope_date="2024-01-02",
+            scope_timezone="UTC",
+            domains=("activity",),
+            record=record,
+        )
+
+    assert store._snapshot_state() == before
+    assert store._runs[record.run_key] == record
+    assert cursor in store._cursors
+
+
+def test_preseeded_idempotency_replay_skips_seed_and_adapter_access() -> None:
+    store = VerificationRunStore()
+    owner_session_key = "synthetic-session-replay-before-seed"
+    owner_key = "owner-demo-replay-before-seed"
+    record, created = store.create(
+        owner_session_key=owner_session_key,
+        owner_key=owner_key,
+        ow_user_key="ow-link:synthetic-session-replay-before-seed",
+        scope_date="2024-01-02",
+        scope_timezone="UTC",
+        domains=("activity",),
+        idempotency_key="replay-before-seed-key",
+    )
+    assert created is True
+    adapter = AlwaysFailingAdapter()
+    client = client_for(
+        session_mode="active",
+        session_key=owner_session_key,
+        owner_key=owner_key,
+        adapter=adapter,
+        store=store,
+    )
+
+    response = client.post(
+        "/api/v1/me/verify/runs",
+        json=_create_body(),
+        headers={
+            "Origin": "http://testserver",
+            "Idempotency-Key": "replay-before-seed-key",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["data"]["verificationRun"]["runKey"] == record.run_key
+    assert adapter.calls == 0
+    assert store.is_seeded(owner_session_key, owner_key) is False
 
 
 def test_commit_failure_rolls_back_record_mapping_and_run_number() -> None:
@@ -3594,8 +4811,20 @@ def test_create_classifies_invalid_domains_as_invalid_scope(
 
 
 class PostSeedInvalidPendingStore(VerificationRunStore):
-    def seed_from_adapter(self, adapter: object, owner_session_key: str) -> None:
-        super().seed_from_adapter(adapter, owner_session_key)
+    def seed_from_adapter(
+        self,
+        adapter: object,
+        owner_session_key: str,
+        *,
+        owner_key: str,
+        ow_user_key: str | None = None,
+    ) -> None:
+        super().seed_from_adapter(
+            adapter,
+            owner_session_key,
+            owner_key=owner_key,
+            ow_user_key=ow_user_key,
+        )
         pending = self._runs["verify-demo-03"]
         pending.results = [{"metric": "steps", "state": "match"}]
 
@@ -3761,9 +4990,21 @@ class FailOnceInstallStore(VerificationRunStore):
         self.fail_next_install = True
 
     def _install_item(
-        self, item: dict[str, object], owner_session_key: str, *, listed: bool
+        self,
+        item: dict[str, object],
+        owner_session_key: str,
+        *,
+        owner_key: str,
+        listed: bool,
+        ow_user_key: str | None = None,
     ) -> None:
-        super()._install_item(item, owner_session_key, listed=listed)
+        super()._install_item(
+            item,
+            owner_session_key,
+            owner_key=owner_key,
+            listed=listed,
+            ow_user_key=ow_user_key,
+        )
         if self.fail_next_install and item["runKey"] == "verify-demo-02":
             self.fail_next_install = False
             raise error_for("UPSTREAM_INVALID")
@@ -3776,6 +5017,7 @@ def test_seed_failure_restores_all_prior_state_and_retry_succeeds() -> None:
     owner = "synthetic-session-seed-retry"
     store.create(
         owner_session_key=owner,
+        owner_key="owner-demo-seed-retry",
         scope_date="2024-01-01",
         scope_timezone="UTC",
         domains=("activity",),
@@ -3783,6 +5025,7 @@ def test_seed_failure_restores_all_prior_state_and_retry_succeeds() -> None:
     )
     store.create(
         owner_session_key=owner,
+        owner_key="owner-demo-seed-retry",
         scope_date="2024-01-02",
         scope_timezone="UTC",
         domains=("sleep",),
@@ -3795,6 +5038,7 @@ def test_seed_failure_restores_all_prior_state_and_retry_succeeds() -> None:
         state=None,
         limit=1,
         timezone="UTC",
+        owner_key="owner-demo-seed-retry",
     )
     store.list_page(
         context=context,
@@ -3806,17 +5050,28 @@ def test_seed_failure_restores_all_prior_state_and_retry_succeeds() -> None:
     before = store._snapshot_state()
 
     with pytest.raises(BFFError) as caught:
-        store.seed_from_adapter(OfflineFixtureAdapter(), owner)
+        store.seed_from_adapter(
+            OfflineFixtureAdapter(),
+            owner,
+            owner_key="owner-demo-seed-retry",
+        )
 
     assert caught.value.code == "UPSTREAM_INVALID"
     after = store._snapshot_state()
     assert after == before
 
-    store.seed_from_adapter(OfflineFixtureAdapter(), owner)
+    store.seed_from_adapter(
+        OfflineFixtureAdapter(),
+        owner,
+        owner_key="owner-demo-seed-retry",
+    )
     assert "verify-demo-04" in store._runs
     assert store._next_number == 9
     assert store._cursors
-    assert store._idempotency[(owner, "existing-a")][1] == "verify-demo-01"
+    assert (
+        store._idempotency[(owner, "owner-demo-seed-retry", None, "existing-a")][1]
+        == "verify-demo-01"
+    )
 
 
 class FailOnceFinalizeStore(VerificationRunStore):

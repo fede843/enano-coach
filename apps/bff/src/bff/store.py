@@ -33,6 +33,12 @@ def _normalize_domains(domains: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(sorted(set(domains)))
 
 
+CreateScope = tuple[str, str, tuple[str, ...]]
+IdempotencyIndex = tuple[str, str | None, str | None, str]
+PreparedRequest = tuple[str, str | None, str | None, str, CreateScope]
+SeedContext = tuple[str, str | None, str | None]
+
+
 def _timestamp(value: str | None) -> datetime | None:
     if value is None:
         return None
@@ -65,6 +71,9 @@ class RunRecord:
     warnings: list[dict[str, Any]] = field(default_factory=list)
     results: list[dict[str, Any]] | None = None
     listed: bool = True
+    owner_key: str | None = None
+    ow_user_key: str | None = None
+    idempotency_key: str | None = None
 
     def scope(self) -> dict[str, Any]:
         return {
@@ -87,6 +96,8 @@ class CursorContext:
     timezone: str
     schema_version: str = "1"
     ordering: str = "requestedAt.desc,runKey.asc"
+    owner_key: str | None = None
+    ow_user_key: str | None = None
 
 
 @dataclass
@@ -109,31 +120,61 @@ class VerificationRunStore:
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._cursor_ttl_seconds = cursor_ttl_seconds
         self._runs: dict[str, RunRecord] = {}
-        self._idempotency: dict[
-            tuple[str, str], tuple[tuple[str, str, tuple[str, ...]], str]
-        ] = {}
+        self._idempotency: dict[IdempotencyIndex, tuple[CreateScope, str]] = {}
         self._cursors: dict[str, CursorRecord] = {}
+        self._prepared: dict[str, RunRecord] = {}
+        self._prepared_requests: dict[str, PreparedRequest] = {}
+        self._seeded_contexts: set[SeedContext] = set()
         self._next_number = 1
 
-    def _snapshot_state(self) -> tuple[Any, Any, Any, int]:
+    def _snapshot_state(self) -> tuple[Any, Any, Any, int, Any, Any, Any]:
         return (
             deepcopy(self._runs),
             deepcopy(self._idempotency),
             deepcopy(self._cursors),
             self._next_number,
+            dict(self._prepared),
+            dict(self._prepared_requests),
+            set(self._seeded_contexts),
         )
 
-    def _restore_state(self, snapshot: tuple[Any, Any, Any, int]) -> None:
-        runs, idempotency, cursors, next_number = snapshot
+    def _restore_state(
+        self, snapshot: tuple[Any, Any, Any, int, Any, Any, Any]
+    ) -> None:
+        (
+            runs,
+            idempotency,
+            cursors,
+            next_number,
+            prepared,
+            prepared_requests,
+            seeded_contexts,
+        ) = snapshot
         self._runs.clear()
         self._runs.update(deepcopy(runs))
         self._idempotency.clear()
         self._idempotency.update(deepcopy(idempotency))
         self._cursors.clear()
         self._cursors.update(deepcopy(cursors))
+        self._prepared.clear()
+        self._prepared.update(prepared)
+        self._prepared_requests.clear()
+        self._prepared_requests.update(prepared_requests)
+        self._seeded_contexts.clear()
+        self._seeded_contexts.update(seeded_contexts)
         self._next_number = next_number
 
-    def seed_from_adapter(self, adapter: Any, owner_session_key: str) -> None:
+    def seed_from_adapter(
+        self,
+        adapter: Any,
+        owner_session_key: str,
+        *,
+        owner_key: str,
+        ow_user_key: str | None = None,
+    ) -> None:
+        seed_context = (owner_session_key, owner_key, ow_user_key)
+        if seed_context in self._seeded_contexts:
+            return
         snapshot = self._snapshot_state()
         try:
             first_page = adapter.get_bff_response("runs_first_page")
@@ -167,8 +208,41 @@ class VerificationRunStore:
 
             # Do not expose a partially-seeded store if a later candidate fails
             # boundary validation. All adapter records are checked first.
+            run_key_map: dict[str, str] = {}
+            reserved_run_keys: set[str] = set()
+            source_run_keys = {item[0]["runKey"] for item in staged_items}
             for item, listed in staged_items:
-                self._install_item(item, owner_session_key, listed=listed)
+                source_run_key = item["runKey"]
+                run_key = run_key_map.get(source_run_key)
+                if run_key is None:
+                    existing = self._runs.get(source_run_key)
+                    can_reuse_source_key = source_run_key not in self._prepared
+                    if existing is None and can_reuse_source_key:
+                        run_key = source_run_key
+                    elif (
+                        existing is not None
+                        and existing.owner_session_key == owner_session_key
+                        and existing.owner_key == owner_key
+                        and existing.ow_user_key == ow_user_key
+                        and can_reuse_source_key
+                    ):
+                        run_key = source_run_key
+                    else:
+                        run_key = self._next_run_key(
+                            reserved_run_keys | source_run_keys
+                        )
+                    run_key_map[source_run_key] = run_key
+                    reserved_run_keys.add(run_key)
+                if run_key != source_run_key:
+                    item = {**item, "runKey": run_key}
+                self._install_item(
+                    item,
+                    owner_session_key,
+                    owner_key=owner_key,
+                    ow_user_key=ow_user_key,
+                    listed=listed,
+                )
+            self._seeded_contexts.add(seed_context)
         except BFFError:
             self._restore_state(snapshot)
             raise
@@ -177,10 +251,24 @@ class VerificationRunStore:
             raise error_for("UPSTREAM_INVALID") from exc
 
     def _install_item(
-        self, item: dict[str, Any], owner_session_key: str, *, listed: bool
+        self,
+        item: dict[str, Any],
+        owner_session_key: str,
+        *,
+        owner_key: str,
+        ow_user_key: str | None,
+        listed: bool,
     ) -> None:
         run_key = item["runKey"]
         existing = self._runs.get(run_key)
+        if existing is not None and (
+            existing.owner_session_key != owner_session_key
+            or existing.owner_key != owner_key
+            or existing.ow_user_key != ow_user_key
+        ):
+            return
+        if existing is not None and existing.idempotency_key is not None:
+            return
         if existing is not None and not listed:
             existing.state = item["state"]
             existing.requested_at = (
@@ -217,6 +305,8 @@ class VerificationRunStore:
             warnings=item.get("warnings", []),
             results=item.get("results"),
             listed=listed,
+            owner_key=owner_key,
+            ow_user_key=ow_user_key,
         )
         self._runs[record.run_key] = record
         self._next_number = max(self._next_number, self._key_number(record.run_key) + 1)
@@ -228,9 +318,20 @@ class VerificationRunStore:
         except (ValueError, IndexError):
             return 0
 
-    def get(self, run_key: str, owner_session_key: str) -> RunRecord | None:
+    def get(
+        self,
+        run_key: str,
+        owner_session_key: str,
+        owner_key: str | None = None,
+        ow_user_key: str | None = None,
+    ) -> RunRecord | None:
         record = self._runs.get(run_key)
-        if record is None or record.owner_session_key != owner_session_key:
+        if (
+            record is None
+            or record.owner_session_key != owner_session_key
+            or record.owner_key != owner_key
+            or record.ow_user_key != ow_user_key
+        ):
             return None
         return record
 
@@ -238,9 +339,36 @@ class VerificationRunStore:
     def is_empty(self) -> bool:
         return not self._runs
 
-    def _next_run_key(self) -> str:
+    def is_seeded(
+        self,
+        owner_session_key: str,
+        owner_key: str,
+        ow_user_key: str | None = None,
+    ) -> bool:
+        return (owner_session_key, owner_key, ow_user_key) in self._seeded_contexts
+
+    def has_foreign_run(
+        self,
+        run_key: str,
+        owner_session_key: str,
+        owner_key: str | None,
+        ow_user_key: str | None,
+    ) -> bool:
+        record = self._runs.get(run_key)
+        return record is not None and (
+            record.owner_session_key != owner_session_key
+            or record.owner_key != owner_key
+            or record.ow_user_key != ow_user_key
+        )
+
+    def _next_run_key(self, reserved: set[str] | None = None) -> str:
+        reserved = reserved or set()
         number = self._next_number
-        while f"verify-demo-{number:02d}" in self._runs:
+        while (
+            f"verify-demo-{number:02d}" in self._runs
+            or f"verify-demo-{number:02d}" in self._prepared
+            or f"verify-demo-{number:02d}" in reserved
+        ):
             number += 1
         return f"verify-demo-{number:02d}"
 
@@ -252,19 +380,32 @@ class VerificationRunStore:
         scope_timezone: str,
         domains: tuple[str, ...],
         idempotency_key: str,
+        owner_key: str | None = None,
+        ow_user_key: str | None = None,
     ) -> tuple[RunRecord, bool]:
         normalized_domains = _normalize_domains(domains)
         scope = (scope_date, scope_timezone, normalized_domains)
-        idempotency_index = (owner_session_key, idempotency_key)
+        idempotency_index = (
+            owner_session_key,
+            owner_key,
+            ow_user_key,
+            idempotency_key,
+        )
         previous = self._idempotency.get(idempotency_index)
         if previous is not None:
             previous_scope, previous_key = previous
             if previous_scope != scope:
                 raise error_for("IDEMPOTENCY_CONFLICT")
-            record = self._runs.get(previous_key)
-            if record is None:
-                raise error_for("UPSTREAM_INVALID")
-            return record, False
+            return (
+                self._validated_replay(
+                    run_key=previous_key,
+                    owner_session_key=owner_session_key,
+                    owner_key=owner_key,
+                    ow_user_key=ow_user_key,
+                    scope=scope,
+                ),
+                False,
+            )
 
         now = self._now()
         record = RunRecord(
@@ -279,6 +420,17 @@ class VerificationRunStore:
             domains=normalized_domains,
             counts=_counts(None),
             listed=True,
+            owner_key=owner_key,
+            ow_user_key=ow_user_key,
+            idempotency_key=idempotency_key,
+        )
+        self._prepared[record.run_key] = record
+        self._prepared_requests[record.run_key] = (
+            owner_session_key,
+            owner_key,
+            ow_user_key,
+            idempotency_key,
+            scope,
         )
         return record, True
 
@@ -288,8 +440,28 @@ class VerificationRunStore:
         owner_session_key: str,
         idempotency_key: str,
         record: RunRecord,
+        scope_date: str,
+        scope_timezone: str,
+        domains: tuple[str, ...],
+        owner_key: str | None = None,
+        ow_user_key: str | None = None,
     ) -> None:
-        idempotency_index = (owner_session_key, idempotency_key)
+        scope = (scope_date, scope_timezone, _normalize_domains(domains))
+        self._validate_prepared_record(
+            owner_session_key=owner_session_key,
+            owner_key=owner_key,
+            ow_user_key=ow_user_key,
+            idempotency_key=idempotency_key,
+            scope=scope,
+            record=record,
+            require_prepared=True,
+        )
+        idempotency_index = (
+            owner_session_key,
+            owner_key,
+            ow_user_key,
+            idempotency_key,
+        )
         if idempotency_index in self._idempotency:
             raise error_for("IDEMPOTENCY_CONFLICT")
         if record.run_key in self._runs:
@@ -309,9 +481,81 @@ class VerificationRunStore:
                 idempotency_key=idempotency_key,
                 record=record,
             )
+            del self._prepared[record.run_key]
+            del self._prepared_requests[record.run_key]
         except Exception:
             self._restore_state(snapshot)
+            self._prepared.pop(record.run_key, None)
+            self._prepared_requests.pop(record.run_key, None)
             raise
+
+    def _validate_prepared_record(
+        self,
+        *,
+        owner_session_key: str,
+        owner_key: str | None,
+        ow_user_key: str | None,
+        idempotency_key: str,
+        scope: CreateScope,
+        record: RunRecord,
+        require_prepared: bool,
+    ) -> None:
+        if not isinstance(record, RunRecord):
+            raise error_for("IDEMPOTENCY_CONFLICT")
+        prepared_record = self._prepared.get(record.run_key)
+        stored_record = self._runs.get(record.run_key)
+        prepared = prepared_record is not None
+        stored = stored_record is not None
+        if (require_prepared and prepared_record is not record) or (
+            not require_prepared and not (prepared or stored)
+        ):
+            raise error_for("IDEMPOTENCY_CONFLICT")
+        request = (owner_session_key, owner_key, ow_user_key, idempotency_key, scope)
+        canonical = prepared_record if prepared else stored_record
+        if canonical is None:
+            raise error_for("IDEMPOTENCY_CONFLICT")
+        if prepared and self._prepared_requests.get(record.run_key) != request:
+            raise error_for("IDEMPOTENCY_CONFLICT")
+        if not self._record_matches_request(
+            record=canonical,
+            run_key=record.run_key,
+            owner_session_key=owner_session_key,
+            owner_key=owner_key,
+            ow_user_key=ow_user_key,
+            idempotency_key=idempotency_key,
+            scope=scope,
+        ) or not self._record_matches_request(
+            record=record,
+            run_key=record.run_key,
+            owner_session_key=owner_session_key,
+            owner_key=owner_key,
+            ow_user_key=ow_user_key,
+            idempotency_key=idempotency_key,
+            scope=scope,
+        ):
+            raise error_for("IDEMPOTENCY_CONFLICT")
+
+    @staticmethod
+    def _record_matches_request(
+        *,
+        record: RunRecord,
+        run_key: str,
+        owner_session_key: str,
+        owner_key: str | None,
+        ow_user_key: str | None,
+        idempotency_key: str,
+        scope: CreateScope,
+    ) -> bool:
+        return (
+            record.run_key == run_key
+            and record.owner_session_key == owner_session_key
+            and record.owner_key == owner_key
+            and record.ow_user_key == ow_user_key
+            and record.idempotency_key == idempotency_key
+            and record.idempotency_scope() == scope
+            and record.state == "pending"
+            and record.listed is True
+        )
 
     def _finalize_create(
         self,
@@ -332,6 +576,8 @@ class VerificationRunStore:
         scope_timezone: str,
         domains: tuple[str, ...],
         idempotency_key: str,
+        owner_key: str | None = None,
+        ow_user_key: str | None = None,
     ) -> tuple[RunRecord, bool]:
         record, created = self.prepare_create(
             owner_session_key=owner_session_key,
@@ -339,12 +585,19 @@ class VerificationRunStore:
             scope_timezone=scope_timezone,
             domains=domains,
             idempotency_key=idempotency_key,
+            owner_key=owner_key,
+            ow_user_key=ow_user_key,
         )
         if created:
             self.commit_create(
                 owner_session_key=owner_session_key,
                 idempotency_key=idempotency_key,
                 record=record,
+                scope_date=scope_date,
+                scope_timezone=scope_timezone,
+                domains=domains,
+                owner_key=owner_key,
+                ow_user_key=ow_user_key,
             )
         return record, created
 
@@ -356,10 +609,14 @@ class VerificationRunStore:
         scope_timezone: str,
         domains: tuple[str, ...],
         idempotency_key: str,
+        owner_key: str | None = None,
+        ow_user_key: str | None = None,
     ) -> RunRecord | None:
         """Resolve an existing key without changing control-plane state."""
 
-        previous = self._idempotency.get((owner_session_key, idempotency_key))
+        previous = self._idempotency.get(
+            (owner_session_key, owner_key, ow_user_key, idempotency_key)
+        )
         if previous is None:
             return None
         previous_scope, previous_key = previous
@@ -369,9 +626,32 @@ class VerificationRunStore:
             _normalize_domains(domains),
         ):
             raise error_for("IDEMPOTENCY_CONFLICT")
-        record = self._runs.get(previous_key)
-        if record is None:
-            raise error_for("UPSTREAM_INVALID")
+        return self._validated_replay(
+            run_key=previous_key,
+            owner_session_key=owner_session_key,
+            owner_key=owner_key,
+            ow_user_key=ow_user_key,
+            scope=(scope_date, scope_timezone, _normalize_domains(domains)),
+        )
+
+    def _validated_replay(
+        self,
+        *,
+        run_key: str,
+        owner_session_key: str,
+        owner_key: str | None,
+        ow_user_key: str | None,
+        scope: CreateScope,
+    ) -> RunRecord:
+        record = self._runs.get(run_key)
+        if (
+            record is None
+            or record.owner_session_key != owner_session_key
+            or record.owner_key != owner_key
+            or record.ow_user_key != ow_user_key
+            or record.idempotency_scope() != scope
+        ):
+            raise error_for("IDEMPOTENCY_CONFLICT")
         return record
 
     def rollback_create(
@@ -380,15 +660,53 @@ class VerificationRunStore:
         owner_session_key: str,
         idempotency_key: str,
         record: RunRecord,
+        scope_date: str,
+        scope_timezone: str,
+        domains: tuple[str, ...],
+        owner_key: str | None = None,
+        ow_user_key: str | None = None,
     ) -> None:
         """Remove a newly-created record when boundary validation fails."""
 
-        if self._runs.get(record.run_key) is record:
-            del self._runs[record.run_key]
-        idempotency_index = (owner_session_key, idempotency_key)
+        scope = (scope_date, scope_timezone, _normalize_domains(domains))
+        self._validate_prepared_record(
+            owner_session_key=owner_session_key,
+            owner_key=owner_key,
+            ow_user_key=ow_user_key,
+            idempotency_key=idempotency_key,
+            scope=scope,
+            record=record,
+            require_prepared=False,
+        )
+        idempotency_index = (
+            owner_session_key,
+            owner_key,
+            ow_user_key,
+            idempotency_key,
+        )
         mapping = self._idempotency.get(idempotency_index)
-        if mapping is not None and mapping[1] == record.run_key:
-            del self._idempotency[idempotency_index]
+        if mapping is not None and mapping != (scope, record.run_key):
+            raise error_for("IDEMPOTENCY_CONFLICT")
+        if self._runs.get(record.run_key) is not None and mapping is None:
+            raise error_for("IDEMPOTENCY_CONFLICT")
+        if any(
+            key != idempotency_index and value[1] == record.run_key
+            for key, value in self._idempotency.items()
+        ):
+            raise error_for("IDEMPOTENCY_CONFLICT")
+
+        snapshot = self._snapshot_state()
+        try:
+            self._runs.pop(record.run_key, None)
+            self._prepared.pop(record.run_key, None)
+            self._prepared_requests.pop(record.run_key, None)
+            self._idempotency.pop(idempotency_index, None)
+            for cursor_key, cursor in list(self._cursors.items()):
+                if record.run_key in cursor.run_keys:
+                    self._cursors.pop(cursor_key, None)
+        except Exception:
+            self._restore_state(snapshot)
+            raise
 
     def _filtered(
         self,
@@ -398,6 +716,8 @@ class VerificationRunStore:
         to_date: date | None,
         state: str | None,
         timezone_name: str,
+        owner_key: str | None,
+        ow_user_key: str | None,
     ) -> list[RunRecord]:
         from zoneinfo import ZoneInfo
 
@@ -406,6 +726,8 @@ class VerificationRunStore:
             record
             for record in self._runs.values()
             if record.owner_session_key == owner_session_key
+            and record.owner_key == owner_key
+            and record.ow_user_key == ow_user_key
             and record.listed
             and (state is None or record.state == state)
         ]
@@ -456,6 +778,8 @@ class VerificationRunStore:
             to_date=to_date,
             state=state,
             timezone_name=context.timezone,
+            owner_key=context.owner_key,
+            ow_user_key=context.ow_user_key,
         )
         position = 0
         if cursor is not None:

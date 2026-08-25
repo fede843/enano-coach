@@ -29,8 +29,11 @@ or the agent response.
 
 - Coordinating agent: `<public agent name or identifier>`
 - Subagents and roles: `<role -> public identifier>`
+- Workflow mode: `local/personal` or `production/release`
+- Delegation: `local/personal: one implementation -> one independent validation; top-level only; subagent_depth: 1`
+- Execution rule: `<subagents performed only their assigned scope; no nested Task or delegation>`
 - Session date: `<YYYY-MM-DD>`
-- Wave: `<0 evidence | 1 fixture | 2 BFF | 3 UI | 4 verification | 5 closure>`
+- Wave: `<local implementation | local validation | production/release review>`
 - Task: `<brief, concrete description>`
 - Overall status: `DONE`, `IN PROGRESS`, `PENDING`, or `BLOCKED`
 - Approved scope: `<what could be changed>`
@@ -46,6 +49,12 @@ not fixed reproducibly.
 Text:
 
 > `<Verifiable summary. Clearly separate observed result, completed change, and limitations.>`
+
+### 2.1 Local/Personal Simplifications And Safeguards
+
+- Simplifications made: `<reduced waves, proportional checks, or omitted tooling>`
+- Retained safeguards: `<secrets, ownership, SQL, health-fact, loopback, read-only, and claim boundaries>`
+- Production/release items deliberately not applied: `<immutable reference, backup/restore, rollback, deployment, or separate reviews>`
 
 ## 3. Files and Ownership
 
@@ -73,6 +82,8 @@ applicable.
 Ownership conflicts:
 
 - `<none, or describe the conflict, owner, and how it was serialized>`
+- `<Every assignment was top-level and sequential; a blocker was reported rather
+  than recursively delegated>`
 
 ## 4. Wave Status
 
@@ -80,13 +91,19 @@ Ownership conflicts:
 |---|---|---|---|---|
 | `<wave/role>` | `<responsibility>` | `YES` / `NO` | `<relative paths>` | `DONE` / `PENDING` |
 
-If a handoff is missing, mark the wave `PENDING`. Do not consider it complete
-by inference.
+If a handoff is missing, mark the row `PENDING`. Do not consider it complete by
+inference. In `local/personal` mode, record one implementation row followed by
+one independent validation row. Each delegated row is top-level with
+`subagent_depth: 1`; the coordinator waits before assigning dependent work.
+Subagents execute their assigned scope directly and must not call `Task` or
+create nested agents. A subagent that cannot perform its scope reports the
+blocker in its handoff.
 
-The primary agent coordinates and integrates handoffs. The primary agent does
-not directly perform implementation, tests, diff review, the privacy pass, or
-final validation; each activity is delegated to an agent independent of the
-author. Closure requires their separate evidence.
+The validation row combines correctness, privacy, and final-scope evidence. Do
+not add redundant review rows for a small local change. If
+`production/release` mode is active, list its separate correctness, privacy, and
+final reviews and its immutable-reference, backup/restore, rollback, and
+deployment evidence.
 
 ## 5. Decisions
 
@@ -134,7 +151,12 @@ Writing rules:
 
 Record sanitized commands, the actual result, and limitations. Do not paste
 payloads, complete logs, tokens, private URLs, or output containing personal
-data.
+data. For `local/personal`, record focused tests for changed code, the relevant
+full suite, `git diff --check`, Markdown/relative-link checks, JSON/YAML parsing,
+and a disposable migration/API smoke only when the change crosses a database or
+OW boundary. Mark non-applicable checks `NOT RUN` with the reason and risk; do
+not imply that Playwright, backup/restore, or production-like checks are
+required for every small local change.
 
 | Area | Command or test | Result | Date | Public evidence | Limitation |
 |---|---|---|---|---|---|
@@ -252,6 +274,12 @@ Inherited pending items:
 - Reproducible Gadgetbridge-OW baseline: `<commit/tag/release or PENDING>`
 - Removal or blocking of the SQL/`--ow-db-url` helper: `<PENDING; do not claim it has already been removed>`
 - Sanitization of `metadata`, `message`, and `error`: `<PENDING>`
+- Production Authentik/OIDC: `[PENDING]` `future_contract`, disabled and
+  unwired until a separately approved production phase.
+- First real-data milestone: `[PENDING]` read-only OW summary/source data
+  through the BFF to the existing UI, using only explicit loopback-only
+  dev/test access with server-side owner/credential configuration; no health
+  writes, imports, maps, or production claims.
 - Synthetic BFF fixture coverage for anonymous session,
   `ACCESS_BLOCKED`/`403`, `409`, `429`, and `500`: `[VERIFIED]` in
   `fixtures/ui-verification-v1.json`; no real payloads.
@@ -288,22 +316,35 @@ mutating OW health facts. Therefore, rollback must not touch OW data.
 
 ## 14. Closure
 
-Mark closure only after an independent review:
+Mark local closure only after the independent validation handoff. For
+`production/release`, also record the stronger separate reviews and gates:
 
 - [ ] Files and ownership are listed with relative paths.
+- [ ] Delegation stayed one level through top-level tasks with
+  `subagent_depth: 1`; no subagent called Task or created a nested agent.
+- [ ] In local/personal mode, the implementation handoff was followed by one
+  independent validation handoff combining correctness, privacy, and final
+  checks; blockers were reported, not delegated.
+- [ ] If a blocker was found, no more than one targeted fix and one revalidation
+  round occurred; any remaining blocker is recorded as `PENDING` or `BLOCKED`.
+- [ ] Passed gates were not reopened without a new relevant change.
+- [ ] In production/release mode, separate correctness, privacy, and final
+  reviews plus immutable-reference, backup/restore, rollback, and deployment
+  evidence are listed.
 - [ ] Each claim uses a permitted documentary marker and, where applicable, a
   technical class from the canonical taxonomy.
 - [ ] The capability matrix does not present internal fields as public API.
 - [ ] Tests have an actual result or are marked `NOT RUN` with a reason and risk.
-- [ ] Accessibility, responsiveness, security, privacy, links, and
-  reproducibility have separate evidence.
+- [ ] Applicable accessibility, responsiveness, security, privacy, links, and
+  reproducibility checks have evidence; non-applicable checks are `NOT RUN` with
+  a reason and risk.
 - [ ] There are no secrets, personal data, real UUIDs, coordinates, or raw
   payloads.
 - [ ] Rollback and the next action are concrete and non-destructive.
-- [ ] The independent reviewer confirms scope and findings.
+- [ ] The independent validator confirms scope and findings.
 
 Final result: `DONE`, `PENDING`, or `BLOCKED`.
 
 Public signature of coordinator: `<identifier>`
 
-Public signature of independent reviewer: `<identifier>`
+Public signature of independent validator: `<identifier>`

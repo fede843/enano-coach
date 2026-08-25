@@ -135,6 +135,32 @@ describe("controller and render state", () => {
     expect(markup).not.toContain("<script");
   });
 
+  it("renders an empty window when only unsupported capability placeholders exist", () => {
+    const state = activeState({
+      page: {
+        status: "ready",
+        error: null,
+        envelope: {
+          schemaVersion: "1",
+          asOf: "2026-08-25T12:30:00Z",
+          timezone: "UTC",
+          data: {
+            logicalDate: "2026-08-25",
+            summary: {
+              stress: { state: "unsupported", value: null, unit: null, isDailyTotal: null }
+            }
+          },
+          coverage: { requested: { logicalDate: "2026-08-25", from: "2026-08-25T00:00:00Z", to: "2026-08-26T00:00:00Z", timezone: "UTC" }, expectedDays: 1, availableDays: 0, isPartial: false, byDomain: {} },
+          warnings: [],
+          extensions: {}
+        }
+      }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={actions} />);
+    expect(markup).toContain("No hay datos para esta ventana");
+    expect(markup).not.toContain("1 campo");
+  });
+
   it("renders a source-specific empty inventory with the requested context", () => {
     const state = activeState({
       route: { name: "sources", path: "/verify/sources" },

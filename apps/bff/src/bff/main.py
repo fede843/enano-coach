@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from collections.abc import Mapping
@@ -12,13 +13,15 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from adapter.offline import OfflineFixtureAdapter, load_offline_fixture_adapter
+from adapter.live import LiveOWAdapter
+from adapter.offline import load_offline_fixture_adapter
 
 from .config import Settings
 from .errors import BFFError, error_for
 from .models import CreateRunBody, ErrorBody
 from .serializers import serialize_error
 from .service import BFFService, validate_date, validate_timezone
+from .session import OwnerContext
 from .store import ALLOWED_DOMAINS, VerificationRunStore
 
 
@@ -69,6 +72,32 @@ def _is_api_path(path: Any) -> bool:
     return isinstance(path, str) and (path == "/api" or path.startswith("/api/"))
 
 
+def _is_loopback_client(scope: Mapping[str, Any]) -> bool:
+    client = scope.get("client")
+    if not isinstance(client, (tuple, list)) or not client:
+        return False
+    host = client[0]
+    if not isinstance(host, str):
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    mapped_address = getattr(address, "ipv4_mapped", None)
+    return bool(
+        mapped_address.is_loopback
+        if mapped_address is not None
+        else address.is_loopback
+    )
+
+
+def _has_allowed_origin(
+    scope: Mapping[str, Any], allowed_origins: frozenset[str]
+) -> bool:
+    origins = _header_values(scope, "origin")
+    return not origins or len(origins) == 1 and origins[0] in allowed_origins
+
+
 def _next_request_id(request: Request) -> str:
     try:
         app = getattr(request, "app", None)
@@ -85,19 +114,28 @@ def _next_request_id(request: Request) -> str:
 class NoStoreMiddleware:
     """Prevent browser caches from retaining any BFF response."""
 
-    def __init__(self, app: Any) -> None:
+    def __init__(
+        self,
+        app: Any,
+        *,
+        dev_access_enabled: bool = False,
+        allowed_origins: frozenset[str] = frozenset(),
+    ) -> None:
         self.app = app
+        self.dev_access_enabled = dev_access_enabled
+        self.allowed_origins = allowed_origins
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope.get("type") != "http" or not _is_api_path(scope.get("path", "")):
+        if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
 
+        is_api_path = _is_api_path(scope.get("path", ""))
         response_started = False
 
         async def send_without_cache(message: dict[str, Any]) -> None:
             nonlocal response_started
-            if message.get("type") == "http.response.start":
+            if is_api_path and message.get("type") == "http.response.start":
                 response_started = True
                 headers = [
                     (key, value)
@@ -107,6 +145,23 @@ class NoStoreMiddleware:
                 headers.append(NO_STORE_HEADER)
                 message = {**message, "headers": headers}
             await send(message)
+
+        if self.dev_access_enabled and (
+            not _is_loopback_client(scope)
+            or not _has_allowed_origin(scope, self.allowed_origins)
+        ):
+            error = error_for("FORBIDDEN")
+            request = Request(scope, receive)
+            response = JSONResponse(
+                status_code=error.status_code,
+                content=_request_error_payload(request, error),
+            )
+            await response(scope, receive, send_without_cache)
+            return
+
+        if not is_api_path:
+            await self.app(scope, receive, send)
+            return
 
         try:
             await self.app(scope, receive, send_without_cache)
@@ -371,24 +426,66 @@ FORBIDDEN_QUERY_KEYS = frozenset(
 
 def create_app(
     *,
-    adapter: OfflineFixtureAdapter | None = None,
+    adapter: Any | None = None,
     environment: str | None = None,
     session_mode: str | None = None,
+    dev_access_enabled: bool | str | None = None,
     session_key: str | None = None,
+    principal_key: str | None = None,
+    owner_key: str | None = None,
+    ow_user_key: str | None = None,
     allowed_origin: str | None = None,
     cursor_ttl_seconds: int | None = None,
     fixture_case: str | None = None,
+    live_ow_enabled: bool | str | None = None,
+    ow_api_base_url: str | None = None,
+    ow_bearer_token: str | None = None,
+    ow_api_key: str | None = None,
+    ow_timeout_seconds: float | str | None = None,
+    live_transport: Any | None = None,
     store: VerificationRunStore | None = None,
 ) -> FastAPI:
     settings = Settings.from_environment(
         environment=environment,
         session_mode=session_mode,
+        dev_access_enabled=dev_access_enabled,
         session_key=session_key,
+        principal_key=principal_key,
+        owner_key=owner_key,
+        ow_user_key=ow_user_key,
         allowed_origin=allowed_origin,
         cursor_ttl_seconds=cursor_ttl_seconds,
         fixture_case=fixture_case,
+        live_ow_enabled=live_ow_enabled,
+        ow_api_base_url=ow_api_base_url,
+        ow_bearer_token=ow_bearer_token,
+        ow_api_key=ow_api_key,
+        ow_timeout_seconds=ow_timeout_seconds,
     )
-    selected_adapter = adapter or load_offline_fixture_adapter()
+    if adapter is not None:
+        selected_adapter = adapter
+    elif settings.live_ow_enabled:
+        expected_owner_context = OwnerContext(
+            principal_key=settings.principal_key,
+            owner_key=settings.owner_key,
+            ow_user_key=settings.ow_user_key,
+        )
+        if (
+            settings.ow_api_base_url is None
+            or settings.ow_bearer_token is None
+            and settings.ow_api_key is None
+        ):
+            raise ValueError("live OW configuration is incomplete")
+        selected_adapter = LiveOWAdapter(
+            base_url=settings.ow_api_base_url,
+            bearer_token=settings.ow_bearer_token,
+            api_key=settings.ow_api_key,
+            expected_owner_context=expected_owner_context,
+            timeout_seconds=settings.ow_timeout_seconds,
+            transport=live_transport,
+        )
+    else:
+        selected_adapter = load_offline_fixture_adapter()
     selected_store = store or VerificationRunStore(
         cursor_ttl_seconds=settings.cursor_ttl_seconds
     )
@@ -413,7 +510,11 @@ def create_app(
         max_bytes=MAX_CREATE_BODY_BYTES,
         catch_errors=True,
     )
-    app.add_middleware(NoStoreMiddleware)
+    app.add_middleware(
+        NoStoreMiddleware,
+        dev_access_enabled=settings.dev_access_enabled,
+        allowed_origins=settings.allowed_origins,
+    )
 
     @app.exception_handler(BFFError)
     async def bff_error_handler(request: Request, exc: BFFError) -> JSONResponse:

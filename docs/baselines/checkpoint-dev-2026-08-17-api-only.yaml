@@ -1,0 +1,261 @@
+document: enano-coach-development-checkpoint
+document_version: "1"
+captured_on: "2026-08-17"
+scope:
+  marker: "[PROPOSED]"
+  statement: "Development-only evidence for the current mutable OW and Gadgetbridge-OW baselines and the uncommitted API-only removal patch; not a release, production migration, or deployment reference."
+  production_reference: "none"
+  production_reference_kind: "none"
+  development_only: true
+  authoritative_development_baseline: "The current mutable OW and Gadgetbridge-OW branches are development baselines only; the current source patch is not an immutable reference."
+  release_claim: false
+  historical_deployment_migration_claim: false
+  real_instance_checked: false
+  services_started: false
+  database_accessed: false
+  migrations_run: false
+  network_accessed: false
+  real_data_accessed: false
+  direct_sql_allowed_for_enano_coach: false
+
+repositories:
+  enano_coach:
+    relative_path: "."
+    head: "f5be1fbb13c53d0f55340949df98946b1c484066"
+    branch: "main"
+    baseline_class: "unverified"
+    baseline_marker: "[PENDING]"
+  open_wearables:
+    relative_path: "../open-wearables"
+    head: "88d456155e63bf37e8cd90e3f0ac2fa24ab47420"
+    branch: "wip/sdk-sync"
+    baseline_class: "unverified"
+    baseline_marker: "[PENDING]"
+  gadgetbridge_ow:
+    relative_path: "../gadgetbridge-ow"
+    head: "e494a5292de6225cc9e0a112e6ffc0dbea2a4856"
+    branch: "main"
+    baseline_class: "unverified"
+    baseline_marker: "[PENDING]"
+
+excluded_artifacts: "Unassigned IDE metadata, caches, generated outputs, dependency directories, databases, dumps, exports, raw payloads, and other development artifacts are excluded from this checkpoint."
+
+historical_snapshot:
+  path: "docs/baselines/checkpoint-dev-2026-08-16.yaml"
+  marker: "[VERIFIED]"
+  classification: "persisted_internal"
+  statement: "The 2026-08-16 checkpoint recorded the legacy direct OW database path as present in the historical Gadgetbridge-OW snapshot. That statement remains historical and is not a claim about the current source or any deployment."
+
+current_gadgetbridge_patch:
+  marker: "[VERIFIED]"
+  classification: "fork_extension"
+  status: "uncommitted_mutable_development_evidence"
+  scope: "Only the API-only removal behavior listed here is recorded; other uncommitted checkout changes are outside this checkpoint."
+  statement: "The current development diff removes the legacy database option, dependency, direct OW database helpers, and legacy invocation/tests from the supported current source."
+  evidence:
+    - path: "../gadgetbridge-ow/pyproject.toml"
+      observation: "The optional PostgreSQL driver dependency is absent in the current file."
+    - path: "../gadgetbridge-ow/src/gadgetbridge_ow/cli.py"
+      observation: "The legacy database CLI option and run_sync pass-through are absent in the current file."
+    - path: "../gadgetbridge-ow/src/gadgetbridge_ow/sync.py"
+      observation: "The direct OW database helpers, switch, parameter, and fallback branch are absent; workout enrichment construction uses the API/SDK path."
+    - path: "../gadgetbridge-ow/tests/test_cli.py"
+      observation: "A synthetic test rejects the removed CLI option."
+    - path: "../gadgetbridge-ow/tests/test_sync.py"
+      observation: "Synthetic tests reject the removed run_sync keyword and exercise API/SDK workout enrichment construction."
+
+source_boundary:
+  local_sqlite:
+    marker: "[FIXED]"
+    classification: "fork_extension"
+    statement: "Local SQLite remains source-input extraction and scoping only; it is not an OW destination and is not an Enano Coach integration path."
+  api_sdk_enrichment_construction:
+    marker: "[PENDING]"
+    classification: "accepted_not_persisted"
+    statement: "Route, segments, and hrZones construction on the API/SDK path is bounded to request construction and local tests; it does not prove authorized acceptance, canonical persistence, or public readback."
+  disposable_ow_internal_readback:
+    marker: "[VERIFIED]"
+    classification: "persisted_internal"
+    statement: "The separately recorded disposable synthetic wave supports only bounded internal ORM/readback evidence and aggregate counts; it is not a public response or a BFF health-data store."
+  public_rich_workout_readback:
+    marker: "[PENDING]"
+    classification: "future_contract"
+    statement: "Public rich workout detail, route association, segments, and hrZones still require a versioned authorized endpoint, schema, privacy policy, pagination, and tests."
+  production_persistence:
+    marker: "[PENDING]"
+    classification: "unverified"
+    statement: "Production persistence and readback remain unverified until a fixed reference, ownership, terminal behavior, authorized response, and readback evidence exist."
+
+sql_disposition:
+  historical_path:
+    marker: "[VERIFIED]"
+    classification: "persisted_internal"
+    statement: "At the 2026-08-16 snapshot, the legacy option, optional driver, direct helpers, and legacy tests were recorded as present."
+  current_patch:
+    marker: "[VERIFIED]"
+    classification: "fork_extension"
+    statement: "The current uncommitted development patch removes the legacy option, ow_db_url plumbing, optional PostgreSQL dependency, direct OW database helpers, and legacy invocation/tests from the supported current source."
+    verification_boundary: "Independent static inspection and targeted synthetic tests cover the current source diff; this is not a release, production migration, or historical deployment migration."
+  enano_coach_rule:
+    marker: "[FIXED]"
+    classification: "future_contract"
+    statement: "Direct SQL against OW PostgreSQL remains prohibited for the Enano Coach BFF and normal importer path. No exception is authorized by this checkpoint."
+  adoption:
+    marker: "[PENDING]"
+    classification: "unverified"
+    statement: "Release and integration adoption of the mutable removal patch remains pending, together with immutable references and compatibility evidence."
+
+references:
+  project_documents:
+    - path: "AGENTS.md"
+      marker: "[FIXED]"
+    - path: "docs/PROJECT_PLAN.md"
+      marker: "[FIXED]"
+    - path: "docs/INITIAL_COMMIT_CHECKLIST.md"
+      marker: "[FIXED]"
+    - path: "docs/HANDOFF_TEMPLATE.md"
+      marker: "[FIXED]"
+    - path: "skills-lock.json"
+      marker: "[FIXED]"
+      locked_external_skill_count: 11
+  contracts:
+    - path: "docs/contracts/OW_READ_CONTRACT.md"
+      version: "ow-read-v1"
+      classification: "unverified"
+      marker: "[PROPOSED]"
+      limit: "Observed local OW read baseline; no fixed production reference or authorized readback is recorded here."
+    - path: "docs/contracts/BFF_UI_CONTRACT.md"
+      version: "bff-ui-v1"
+      classification: "public_api"
+      marker: "[FIXED]"
+      limit: "Synthetic first-slice contract; real OW integration remains pending."
+    - path: "docs/MVP_UI_BUILD_BRIEF.md"
+      version: "first-slice-brief"
+      classification: "future_contract"
+      marker: "[PROPOSED]"
+      limit: "Implementation order and UI boundary, not an OW release contract."
+  fixtures:
+    - path: "docs/fixtures/ow-read-v1.json"
+      version: "ow-read-v1"
+      synthetic: true
+      classification: "public_api"
+      marker: "[VERIFIED]"
+      limit: "Synthetic adapter shape; it does not authorize a user, route, or production capability."
+    - path: "docs/fixtures/ui-verification-v1.json"
+      version: "bff-ui-v1"
+      synthetic: true
+      classification: "public_api"
+      marker: "[VERIFIED]"
+      limit: "Synthetic BFF/UI responses and negative cases; it does not prove live transport behavior."
+  custom_skills:
+    - ".agents/skills/enano-coach-architecture/SKILL.md"
+    - ".agents/skills/enano-coach-health-imports/SKILL.md"
+    - ".agents/skills/enano-coach-health-metrics/SKILL.md"
+    - ".agents/skills/enano-coach-oidc-bff/SKILL.md"
+    - ".agents/skills/enano-coach-open-wearables/SKILL.md"
+    - ".agents/skills/enano-coach-ow-default-catalog/SKILL.md"
+    - ".agents/skills/enano-coach-public-privacy/SKILL.md"
+  custom_skills_note: "Custom skills are discovered by path and are not lock dependencies."
+  relevant_external_skills:
+    - name: "code-security"
+      lock_key: "code-security"
+      classification: "unverified"
+      marker: "[VERIFIED]"
+      limit: "Loaded from the local copy represented by skills-lock.json; no application code was changed."
+    - name: "verification-before-completion"
+      lock_key: "verification-before-completion"
+      classification: "unverified"
+      marker: "[VERIFIED]"
+      limit: "Used to require fresh evidence before closure claims."
+
+bounded_risks:
+  - id: "R-01"
+    marker: "[RISK]"
+    classification: "unverified"
+    statement: "The developer API key was observed as cross-user in the disposable wave; ownership and Auth gates remain open."
+    mitigation: "Resolve identity and OW links server-side, check ownership before every query, and add cross-user tests before any live BFF adapter."
+  - id: "R-02"
+    marker: "[RISK]"
+    classification: "unverified"
+    statement: "An uncommitted source removal is mutable and does not prove that a historical deployment was migrated."
+    mitigation: "Pin clean OW and Gadgetbridge references and make a separately reviewed integration/adoption decision."
+  - id: "R-03"
+    marker: "[RISK]"
+    classification: "accepted_not_persisted"
+    statement: "API/SDK input construction and a 202 or terminal internal observation do not prove public rich workout persistence or readback."
+    mitigation: "Require an authorized response, terminal correlation, replay/idempotency evidence, and readback against a fixed reference."
+  - id: "R-04"
+    marker: "[RISK]"
+    classification: "unverified"
+    statement: "Open sync metadata, messages, and errors could leak if the BFF forwards them without an allowlist."
+    mitigation: "Keep upstream_observed server-side, emit only tested BFF_sanitized fields, and keep raw_not_public content out of public artifacts."
+
+pending_items:
+  - id: "P-01"
+    marker: "[PENDING]"
+    classification: "unverified"
+    item: "Immutable OW and Gadgetbridge-OW references and compatibility evidence."
+  - id: "P-02"
+    marker: "[PENDING]"
+    classification: "unverified"
+    item: "Ownership/Auth, server-side OW linking, and cross-user rejection tests."
+  - id: "P-03"
+    marker: "[PENDING]"
+    classification: "unverified"
+    item: "BFF sanitization allowlist and tests for metadata, messages, errors, counts, and warning codes."
+  - id: "P-04"
+    marker: "[PENDING]"
+    classification: "future_contract"
+    item: "Public rich workout readback for route association, segments, and hrZones."
+  - id: "P-05"
+    marker: "[PENDING]"
+    classification: "unverified"
+    item: "Release/integration adoption of the current API-only removal patch; no historical deployment migration is claimed."
+  - id: "P-06"
+    marker: "[PENDING]"
+    classification: "unverified"
+    item: "Null and sentinel semantics, effective resolution, sync retention, and overnight sleep policy."
+
+validation_evidence:
+  source_patch_tests:
+    marker: "[VERIFIED]"
+    classification: "unverified"
+    command: "pytest -q tests/test_cli.py::test_sync_cli_rejects_removed_database_url_option tests/test_sync.py::test_run_sync_rejects_removed_database_url_keyword tests/test_sync.py::test_workout_api_payload_uses_sdk_enrichments tests/test_sync.py::test_impossible_hr_zones_are_omitted_from_api_payload"
+    result: "PASS: 4 passed in 0.08s."
+    limit: "Targeted synthetic tests only; no service, database, network, or real data was used."
+  source_static_scan:
+    marker: "[VERIFIED]"
+    classification: "unverified"
+    command: "Offline scan of the current source, dependency, and targeted test files for removed legacy symbols"
+    result: "PASS: the removed option, parameter, dependency, switch, helpers, and legacy exception symbols were absent from the checked current files."
+    limit: "Static absence only; it does not establish a release or public API."
+  lint:
+    marker: "[VERIFIED]"
+    classification: "unverified"
+    command: "ruff check pyproject.toml src/gadgetbridge_ow/cli.py src/gadgetbridge_ow/sync.py tests/test_cli.py tests/test_sync.py"
+    result: "PASS: All checks passed!"
+    limit: "Targeted current Gadgetbridge-OW files only."
+  patch_whitespace:
+    marker: "[VERIFIED]"
+    classification: "unverified"
+    command: "git -C ../gadgetbridge-ow diff --check"
+    result: "PASS: no whitespace diagnostics."
+    limit: "Current external checkout diff only."
+  documentation_checks:
+    marker: "[VERIFIED]"
+    classification: "unverified"
+    command: "Offline YAML/JSON/Markdown validation script plus no-index whitespace checks for each of the four owned files"
+    result: "PASS: YAML/JSON parsing, required refs, synthetic fixtures, Markdown fences, relative links, permitted markers, privacy patterns, and trailing whitespace; all four no-index diff checks produced no diagnostics."
+    limit: "Documentation-only scope."
+
+rollback:
+  marker: "[PROPOSED]"
+  condition: "A reviewer finds an unsupported claim, privacy issue, stale snapshot statement, or classification error."
+  action: "Remove or revise only this new checkpoint and the three reconciled phase-next documents in a reviewed documentation change; do not reset, clean, alter source checkouts, run migrations, or touch OW data."
+  data_impact: "none"
+  post_rollback_validation: "Re-run YAML, Markdown, relative-link, privacy, no-index whitespace, and diff checks for the remaining documentation change."
+
+next_action:
+  marker: "[PENDING]"
+  statement: "Complete the ownership/Auth gate, pin immutable OW and Gadgetbridge references, verify sanitization and authorized API/readback behavior, then make a separate release/integration adoption decision for the current API-only removal patch."
+  do_not_do_yet: "Do not enable a live BFF adapter, claim public rich workout readback or production persistence, use direct OW SQL, run migrations, or treat the mutable patch as a release."

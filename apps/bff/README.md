@@ -1,13 +1,29 @@
 # Enano Coach BFF
 
-This is a local, offline FastAPI BFF for the first verification slice.
+This is a local FastAPI BFF for the first verification slice. Offline fixture
+mode remains the default.
 
-- It reads only the approved `OfflineFixtureAdapter`.
+- Offline mode reads only the approved `OfflineFixtureAdapter`.
 - Its `VerificationRun` records are in-memory control-plane aggregates.
 - Its synthetic session mode is selected by server configuration, not by a browser request.
 - Every browser-facing `/api` success and error response is marked
   `Cache-Control: no-store`; health responses and verification records are not cached.
-- It does not call Open Wearables, use SQL, persist data, or make outbound requests.
+- In offline mode it does not call Open Wearables, use SQL, persist data, or make
+  outbound requests.
+- `[VERIFIED]` An explicit local development/test gate can select the server-side
+  `LiveOWAdapter` for read-only overview and source requests. It requires
+  `BFF_LIVE_OW_ENABLED=true`, `BFF_DEV_ACCESS_ENABLED=true`, a development/test
+  environment, server-side OW configuration, and loopback access. The browser
+  never supplies the OW URL, owner reference, user reference, bearer token, or
+  API key. `OW_BEARER_TOKEN` is preferred; the existing server-side
+  `OW_API_KEY` fallback is used only when the bearer token is absent.
+- `[VERIFIED]` The live adapter uses only fixed GET paths, rejects redirects,
+  validates upstream JSON before projection, and exposes only the existing BFF
+  response models. Paginated `metadata` is optional: the synthetic/base wrapper
+  may omit it, while a local response with it is reduced to the allowlisted
+  aggregate fields and dropped before projection. Its tests use a fake
+  transport; real OW compatibility is `[PENDING]` until an authorized read
+  against a reproducible OW reference.
 - The BFF owns explicit, route-specific response models and projections. Adapter
   envelopes are never returned directly to the browser.
 - Synthetic session modes are local development fixtures, not production
@@ -20,6 +36,21 @@ This is a local, offline FastAPI BFF for the first verification slice.
   Module import falls back to an anonymous, non-active local process only so an
   unconfigured development import cannot enable protected access. This guard
   does not implement OIDC or cookie authentication.
+- `[VERIFIED]` The separate opt-in development access gate uses
+  `BFF_DEV_ACCESS_ENABLED=true`; it defaults to `false`, requires exactly
+  `BFF_ENVIRONMENT=development` or `test`, and requires an explicit server-side
+  `BFF_SYNTHETIC_OWNER_KEY`. It rejects non-loopback client addresses. When an
+  `Origin` header is supplied it must match the local `BFF_ALLOWED_ORIGINS`
+  allowlist; browser owner, user, OW, credential, and URL inputs never select
+  ownership or transport.
+  This is a local development boundary, not production authorization or a new
+  public route. A synthetic opt-in is shaped as:
+
+  ```bash
+  BFF_DEV_ACCESS_ENABLED=true BFF_ENVIRONMENT=development \
+    BFF_SYNTHETIC_OWNER_KEY=owner-dev-demo
+  ```
+
 - POST request bodies are bounded by a receive wrapper before JSON accumulation;
   the focused unit test exercises chunked ASGI receives because `TestClient`
   normally presents a complete body in one transport message.
@@ -35,8 +66,104 @@ This is a local, offline FastAPI BFF for the first verification slice.
   boundary check only: `[PENDING]` a production server or proxy must also reject
   ambiguous headers before normalizing them away.
 - The package ranges in `pyproject.toml` are intentional development bounds;
-  this repository has no Python package lockfile. A pinned, reviewed lock is
-  `[PENDING]` before deployment or real OW integration.
+   this repository has no Python package lockfile. A pinned, reviewed lock is
+   `[PENDING]` before deployment or real OW integration.
+
+## Control-Plane Foundation
+
+The control-plane foundation is contract-first and isolated from the running
+synthetic BFF. The FastAPI application does not create an engine, open a
+database connection, run migrations, or read these records yet.
+
+- `[FIXED]` The application database is a separate service-owned PostgreSQL
+  database. It is configured only by the server-side `APP_DATABASE_URL`
+  environment variable. If `OW_DATABASE_URL` is configured, it is used only for
+  a server-side separation check using a single explicit PostgreSQL host, port,
+  and exact database target; unambiguous legacy numeric IPv4 spellings are
+  canonicalized locally for comparison without DNS, malformed authorities and
+  numeric-like hosts plus target-changing query options are rejected, and it is
+  never used as the application URL.
+- `[FIXED]` `BFF_CONTROL_PLANE_ENABLED` defaults to `false`. Enabling it requires
+  an explicit `postgresql+psycopg` `APP_DATABASE_URL`, the driver supported by
+  the current migration/runtime dependencies. SQLite, file, default, and async
+  application drivers are rejected, and an app URL targeting the same
+  PostgreSQL database as `OW_DATABASE_URL` is rejected even when credentials or
+  query options differ. No request parameter, header, fixture, or OW client
+  setting supplies this URL.
+- `[FIXED]` Alembic reads the validated server-side `APP_DATABASE_URL` directly;
+  `sqlalchemy.url` in an Alembic file or CLI configuration cannot override it.
+- `[FIXED]` The schema contains only `app_user`, `oidc_identity`, `ow_link`,
+  `session`, `audit_event`, `idempotency_record`, and `verification_run`.
+- `[FIXED]` `session_hash`, `key_digest`, and `request_digest` are lowercase
+  SHA-256 hexadecimal digests with fixed length. `hash_session_token()` hashes a
+  raw session token in memory and returns only its digest; raw tokens are not
+  model fields and are not stored. OIDC tokens, API keys, claims blobs,
+  passwords, raw payloads, and health facts are not modelled.
+- `[FIXED]` `oidc_identity` is unique on `(issuer, subject)`. `ow_link` keeps
+  link history with an explicit status/version and has PostgreSQL partial unique
+  indexes for at most one active link per local user and at most one active link
+  per OW user reference. The selected default is one-to-one ownership.
+- `[PENDING]` Changing to one-to-many ownership requires a reviewed product and
+  privacy decision, an authorization/contract update, conflict resolution for
+  existing active links, a replacement migration for both partial indexes, and
+  a tested rollback plan. The current schema is not runtime-configurable.
+- `[FIXED]` Scope domains, warning codes, audit actions, audit target types,
+  audit results, control-record states, and session revocation reasons are
+  bounded machine-value allowlists. Unknown values and upstream prose are
+  rejected before ORM persistence; warning messages and detailed results are not
+  stored.
+  The scope and warning values follow `BFF_UI_CONTRACT.md`: domains are
+  `activity`, `sleep`, `recovery`, `body`, `workouts`, and `sources`; warning
+  codes are `PARTIAL_COVERAGE`, `SOURCE_AMBIGUOUS`, `NOT_VERIFIABLE`,
+  `INCONCLUSIVE`, `MISMATCH`, `UNSUPPORTED`, `BODY_RELATIVE_TO_NOW`,
+  `CURSOR_EXPIRED`, and `UPSTREAM_LIMITED`.
+- `[FIXED]` Idempotency records store opaque ownership references, a key digest,
+  a request digest, a control scope, lifecycle state, and an optional opaque
+  result reference. Verification-run records store only scope, state, aggregate
+  counts, warning codes, timestamps, and opaque ownership/run keys. Detailed
+  health results, metric values, workouts, sleep, GPS, raw payloads, and upstream
+  prose are deliberately not persisted in this foundation and require a
+  separate privacy and contract decision.
+- `[PROPOSED]` The first provider remains synthetic. Auth Code + PKCE, issuer,
+  audience, nonce, state, PKCE, and callback validation belong to the later
+  OIDC runtime wave.
+- `[PROPOSED]` The later runtime will use server-side sessions with an explicit
+  `HttpOnly`, `Secure`, and `SameSite` cookie policy and will resolve ownership
+  before every OW request.
+
+Alembic is isolated under `migrations/`. The revision is reviewable and
+transactional; it is not run by application startup. A disposable PostgreSQL
+upgrade, safe second `upgrade head`, constraint/readback, downgrade, backup,
+and restore gate is `[PENDING]`. No existing database, OW database, or
+production data was used for this foundation.
+
+### Classifications
+
+| Capability | Technical class | Evidence and limit |
+|---|---|---|
+| Technical control-plane metadata | `accepted_not_persisted` | `src/bff/control_plane.py`, `src/bff/control_plane_db.py`, `src/bff/control_plane_repositories.py`, offline Alembic DDL, and isolated schema/repository tests; PostgreSQL persistence/readback is pending. |
+| Feature-disabled app database boundary | `future_contract` | `src/bff/control_plane_config.py` and config tests; not consumed by the current HTTP runtime. |
+| Synthetic in-memory verification runs | `accepted_not_persisted` | Existing BFF store and synthetic tests; process state remains non-durable. |
+| Open Wearables normalized health reads | `default` | Existing read contract and fixture adapter; no control-plane health copy is introduced. |
+| OIDC runtime and durable ownership wiring | `future_contract` | Requires provider, callback, session, authorization, CSRF, and integration tests. |
+
+Sync metadata remains `upstream_observed`; only a future verified allowlist may
+produce `BFF_sanitized` output, and raw upstream values remain `raw_not_public`.
+
+## Synthetic Ownership Boundary
+
+- `[VERIFIED]` Local synthetic `SessionContext` and `OwnerContext` values are
+  derived from server settings. The session, owner, and OW-link context is never
+  selected from browser headers, query parameters, or request bodies.
+- `[VERIFIED]` Synthetic runs, BFF cursors, and idempotency mappings are isolated
+  by that server-derived context. Foreign runs and cursors are rejected without
+  adapter access, and the same idempotency key does not cross owner or OW-link
+  scopes.
+- `[RISK]` This is local synthetic isolation only. It is not OIDC, durable
+  ownership or control-plane persistence, complete CSRF protection, rate
+  limiting, multi-worker concurrency safety, or real OW integration. The live
+  adapter is fake-transport tested only; actual OW compatibility remains
+  `[PENDING]`.
 
 ## Boundary Decisions
 
@@ -47,6 +174,12 @@ This is a local, offline FastAPI BFF for the first verification slice.
   envelope uses the BFF-derived logical date, IANA timezone, and UTC window.
   An omitted or malformed adapter request envelope is still `502
   UPSTREAM_INVALID`.
+- `[PROPOSED]` The public BFF keeps `date=YYYY-MM-DD` as a logical day. For the
+  observed mutable local OW fork only, the BFF-derived day bounds are forwarded
+  as UTC RFC3339 `Z` values under the fork's `start_date`/`end_date` query names.
+  This is `fork_extension` development evidence, not a universal OW public
+  claim; the exact wire encoding remains `[PENDING]` until an immutable OW
+  reference is checked.
 - `[FIXED]` This timezone projection changes BFF request metadata only. It does
   not rebucket or reinterpret synthetic metric values, does not claim that the
   fixture was queried at the requested timezone, and does not perform a real OW
@@ -84,9 +217,9 @@ This is a local, offline FastAPI BFF for the first verification slice.
 - `[PENDING]` The supplied `not_verifiable` and `inconclusive` fixtures include
   result/warning evidence. The serializer enforces that pairing but does not
   infer nullable timestamps or counts that the contract permits to remain null.
-- `[PENDING]` Real OIDC, cookie sessions, ownership storage, CSRF tokens, rate
-  limiting, a dependency lock, and an immutable OW reference remain outside
-  this local correction.
+- `[PENDING]` Real OIDC, cookie sessions, durable ownership storage, CSRF
+  tokens, rate limiting, multi-worker concurrency, a dependency lock, and an
+  immutable OW reference remain outside this local correction.
 
 Run the local checks from the repository root with an explicit synthetic
 environment:
@@ -114,7 +247,7 @@ install artifact remains `[PENDING]`.
 - Task: correct cursor validation ordering before adapter seeding
 - Overall status: PENDING independent review; implementation and local verification completed
 - Approved scope: `apps/bff/src/bff/**`, `apps/bff/pyproject.toml`, and this README
-- Uncompleted scope: adapter, fixtures, contracts, plan, UI, shared tests, real OW, real OIDC, and deployment
+- Uncompleted scope: real OW compatibility, fixtures, contracts, plan, UI, shared tests, real OIDC, and deployment
 - Explicit user instruction required: yes: do not spawn another agent; preserve unrelated worktree changes
 
 ### 2. Executive Summary
@@ -142,10 +275,12 @@ client headers, query parameters, and bodies do not select a session mode or OW
 user. Duplicate security-sensitive inputs are rejected rather than canonicalized
 by last-value-wins. Request-ID generation is non-exhausting with a safe fallback.
 
-The result is verified only against the local synthetic adapter. Synthetic
-session state is not authentication; real OIDC, cookie sessions, and ownership
-remain `[PENDING]`. The Origin check is only a local mutation guard, not
-complete CSRF; rate limiting is not implemented; and verification runs remain
+The result is verified only against the local synthetic adapter. `[VERIFIED]`
+Server-derived synthetic session, owner, and OW-link isolation covers runs,
+cursors, and idempotency scopes; it is not authentication or durable ownership.
+Real OIDC, cookie sessions, and durable ownership remain `[PENDING]`. The Origin
+check is only a local mutation guard, not complete CSRF; rate limiting and
+multi-worker concurrency are not implemented; verification runs remain
 in-memory and non-durable. Real OW integration and a dependency lock remain
 `[PENDING]`.
 
@@ -166,7 +301,10 @@ in-memory and non-durable. Real OW integration and a dependency lock remain
   `UPSTREAM_INVALID`.
 - `[FIXED]` Seed installation and commit finalization restore all prior in-memory state after forced failures, including cursors, idempotency mappings, and run numbering.
 - `[FIXED]` Request IDs use a non-exhausting synthetic counter and return a safe fallback envelope when the counter fails.
-- `[FIXED]` Run-list cursor format, session/context binding, expiration, filters, limit, ordering, schema, and timezone are checked before store seeding, dependency-case checks, or adapter responses; malformed, expired, and context-mismatched cursors do not call the adapter.
+- `[FIXED]` Run-list cursor format, session/owner/OW-link context binding,
+  expiration, filters, limit, ordering, schema, and timezone are checked before
+  store seeding, dependency-case checks, or adapter responses; malformed,
+  expired, and context-mismatched cursors do not call the adapter.
 - `[FIXED]` Trailing slashes, `HEAD`, unlisted routes, and wrong methods return deliberate JSON `404`/`405` envelopes without `RUN_NOT_FOUND` remapping.
 
 ### 3. Files and Ownership
@@ -241,7 +379,8 @@ was reverted or changed outside the approved scope.
 Unresolved decisions:
 
 - `[PENDING]` Pin the OW release/commit/digest and verify real authorized schemas.
-- `[PENDING]` Implement real OIDC, server-side cookie sessions, ownership, CSRF tokens, and rate limiting.
+- `[PENDING]` Implement real OIDC, server-side cookie sessions, durable
+  ownership storage/checks, CSRF tokens, and rate limiting.
 - `[PENDING]` Add a reviewed Python dependency lock or equivalent reproducible installation process.
 - `[PENDING]` Obtain the required independent diff, privacy, and final-validation handoffs.
 
@@ -249,11 +388,13 @@ Unresolved decisions:
 
 | Area | Command or test | Result | Date | Public evidence | Limitation |
 |---|---|---|---|---|---|
-| Unit/contract/integration | `BFF_ENVIRONMENT=test PYTHONPATH=apps/bff/src pytest -q apps/bff/src/bff apps/bff/src/adapter` | PASS: 332 passed, 213 subtests passed; one existing Starlette/httpx deprecation warning | 2026-08-16 | BFF and adapter suites | Synthetic/offline only |
-| Targeted duplicate-header/security regressions | `BFF_ENVIRONMENT=test PYTHONPATH=apps/bff/src pytest -q apps/bff/src/bff/test_app.py -k 'ambiguous_framing or duplicate_content_header or duplicate_json_body_keys or duplicate_scalar_query_parameters or duplicate_security_headers or missing_environment or request_id_counter'` | PASS: 14 passed, 247 deselected; one existing Starlette/httpx deprecation warning | 2026-08-16 | `src/bff/test_app.py` | Synthetic header, duplicate-input, environment-guard, and request-ID cases only |
-| Ruff | `ruff check apps/bff/src/bff apps/bff/src/adapter` | PASS | 2026-08-16 | BFF and adapter source trees | No external lint service |
-| Black | `black --check apps/bff/src/bff apps/bff/src/adapter` | PASS: 13 files unchanged | 2026-08-16 | BFF and adapter source trees | Formatter check only |
-| Compile | `python -m compileall -q apps/bff/src` | PASS | 2026-08-16 | Owned source tree | Does not execute deployment |
+| Full BFF/adapter suite | `BFF_ENVIRONMENT=test PYTHONPATH=apps/bff/src pytest -q apps/bff/src/bff apps/bff/src/adapter` | [VERIFIED] PASS: 623 passed, 213 subtests passed; one existing Starlette/httpx deprecation warning | 2026-08-24 | BFF and live-adapter suites | Fake live transport only; no real OW request |
+| Live-read adapter boundary | `BFF_ENVIRONMENT=test PYTHONPATH=apps/bff/src pytest -q apps/bff/src/adapter/test_live.py` | [VERIFIED] PASS: 23 tests; one existing Starlette/httpx deprecation warning | 2026-08-24 | Fake transport, ownership, allowlist, timeout, projection, ambiguity, date crosswalk, and live-gate tests | No real OW request or compatibility claim |
+| Control-plane foundation | `BFF_ENVIRONMENT=test PYTHONPATH=apps/bff/src pytest -q apps/bff/src/bff/test_control_plane.py` | [VERIFIED] PASS: 133 passed | 2026-08-21 | SQLAlchemy metadata, constraints, config gate, exact database identity, supported application driver, malformed-authority rejection, and offline Alembic DDL | SQLite in-memory and offline SQL rendering only; no online database |
+| Synthetic ownership isolation regressions | `BFF_ENVIRONMENT=test PYTHONPATH=apps/bff/src pytest -q apps/bff/src/bff/test_app.py -k 'owner or foreign or ow_link or protected_operations or active_owner or cross_owner or two_active_owners or context_switch'` | PASS: 22 passed, 279 deselected; one existing Starlette/httpx deprecation warning | 2026-08-17 | `src/bff/test_app.py` | Server-derived session/owner/OW-link context, foreign run/cursor rejection, and owner/OW-link/idempotency isolation only |
+| Ruff | `ruff check apps/bff/src/bff apps/bff/src/adapter` | [VERIFIED] PASS | 2026-08-21 | BFF and adapter source trees | No external lint service |
+| Black | `black --check apps/bff/src/bff apps/bff/src/adapter` | [VERIFIED] PASS: 23 files unchanged | 2026-08-24 | BFF and adapter source trees | Formatter check only |
+| Compile | `python -m compileall -q apps/bff/src` | [VERIFIED] PASS | 2026-08-21 | Owned source tree | Does not execute deployment |
 | JSON | Python `json.loads` over both public fixtures | PASS | 2026-08-16 | `docs/fixtures/*.json` | Fixtures were not edited by this task |
 | TOML/Markdown | Python TOML parse, README fence, and relative-link checks | PASS | 2026-08-16 | `apps/bff/pyproject.toml`, `apps/bff/README.md` | No site renderer run |
 | Whitespace | `git diff --check` and untracked-text whitespace scan | PASS | 2026-08-16 | Worktree inspection | Existing unrelated changes retained |
@@ -263,21 +404,23 @@ Unresolved decisions:
 | Accessibility/responsive | Not run | NOT RUN: UI files are outside scope | 2026-08-16 | N/A | Requires independent UI validation |
 | Real OW/OIDC/deployment | Not run | NOT RUN: prohibited for this offline slice | 2026-08-16 | N/A | Production compatibility remains pending |
 
-The suite was run again after the final source and test changes. No Docker,
-Ansible, network access, real OW, SQL, migration, or deployment command was run.
+The BFF/adapter suite was rerun after the final source and test changes. The
+control-plane revision was rendered with Alembic in offline `--sql` mode only.
+No Docker, Ansible, network access, real OW, online database/SQL connection, or
+deployment command was run.
 
 ### 7. Contract Claims
 
 | Claim | Marker | Source | Evidence | Scope | Limit or warning |
 |---|---|---|---|---|---|
-| The seven documented BFF routes remain present and no UI shorthand route was added. | [VERIFIED] | `src/bff/main.py` and route test | 318-test run | Local FastAPI app | Not a production deployment contract |
+| The seven documented BFF routes remain present and no UI shorthand route was added. | [VERIFIED] | `src/bff/main.py` and route test | 372-test run | Local FastAPI app | Not a production deployment contract |
 | Successful route output is BFF-owned and rejects unknown model fields, semantic taints, negative scalar heart rate, non-finite numbers, and arbitrary free text. | [VERIFIED] | `src/bff/models.py`, `src/bff/serializers.py` | Tainted/semantic/finite/negative-HR route tests | Overview, sources, settings, runs, session | Uses synthetic adapter evidence |
 | `user_id`, OW IDs, adapter mappings, raw metadata/errors, URLs, paths, credentials, and unknown nested fields do not cross the tested HTTP boundary. | [VERIFIED] | `src/bff/serializers.py`, taint tests | Tainted success/error smoke | Tested injected values only | Real OW output remains pending |
 | Body data is not added to the overview and no workout collection is exposed by these serializers. | [FIXED] | BFF-UI and OW contracts; route serializers | Route models have no body/workout collection | First slice | Future contract may add explicit aggregate fields later |
 | The POST creates only an in-memory BFF-owned verification record and returns pending. | [FIXED] | `src/bff/store.py`, `src/bff/service.py` | Existing idempotency tests | Local process | Not durable persistence and not OW mutation |
-| Synthetic auth modes provide local test state only. | [FIXED] | `src/bff/config.py`, README | Server-selected mode and origin tests | Local process | No OIDC, secure production cookie, or complete CSRF |
+| Synthetic sessions and owner contexts provide local test state only. | [FIXED] | `src/bff/config.py`, `src/bff/session.py`, README | Server-selected mode, context, and origin tests | Local process | No OIDC, secure production cookie, durable ownership, or complete CSRF |
 | Browser-facing `/api` responses are not cached. | [VERIFIED] | `src/bff/main.py`, `src/bff/test_app.py` | Success, POST, auth, validation, `404`, `405`, and `500` header smoke | Local FastAPI app | Does not replace deployment/proxy cache policy |
-| Active synthetic sessions refuse non-local server environments. | [VERIFIED] | `src/bff/config.py`, `src/bff/test_app.py` | Local allowed and non-local refused tests | App construction | Does not implement OIDC, cookie auth, ownership, CSRF, or rate limiting |
+| Active synthetic sessions refuse non-local server environments. | [VERIFIED] | `src/bff/config.py`, `src/bff/test_app.py` | Local allowed and non-local refused tests | App construction | Does not implement OIDC, cookie auth, durable ownership, CSRF, rate limiting, or multi-worker concurrency |
 | Boundary serializers require state-driven warnings, validate declared warning domains, preserve omitted run domains, and project the public overview window from the route. | [VERIFIED] | `src/bff/serializers.py`, `src/bff/test_app.py` | Warning, taint, timezone/DST, and coverage regressions | Overview and run data | Synthetic adapter only; no real OW query |
 | Seed and create state is restored after forced insertion/finalization failures. | [VERIFIED] | `src/bff/store.py`, `src/bff/test_app.py` | Fail-once atomicity regressions | In-memory store | No durable transaction or concurrency claim |
 | Duplicate security-sensitive inputs and request-counter failures remain safe JSON/no-store errors. | [VERIFIED] | `src/bff/main.py`, `src/bff/test_app.py` | Duplicate and request-ID regressions | HTTP boundary | Synthetic transport only |

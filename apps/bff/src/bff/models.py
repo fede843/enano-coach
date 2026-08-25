@@ -301,6 +301,7 @@ class SourceItem(StrictModel):
             "Fuente sintética A",
             "Fuente sintética B",
             "Fuente sintética",
+            "Fuente conectada",
         }:
             raise ValueError("label is not BFF-owned")
         return value

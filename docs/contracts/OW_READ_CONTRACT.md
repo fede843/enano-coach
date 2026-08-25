@@ -44,11 +44,19 @@ be invented in the client.
 
 ### Dates And Timestamps
 
+- `[FIXED]` The public BFF accepts `date=YYYY-MM-DD` plus an IANA timezone for
+  one logical day. It represents the half-open window
+  `[local midnight, next local midnight)`; these public values are not OW wire
+  timestamps.
 - `[FIXED]` For timeseries, the BFF sends `start_time` and `end_time` as
   RFC3339 UTC with `Z` and uses the `[start, end)` window.
-- `[FIXED]` For summaries and events, `start_date`/`end_date` are OW logical
-  dates. The BFF calculates the window in the user's IANA timezone and does not
-  treat a logical date as a UTC timestamp without conversion.
+- `[PROPOSED]` The current local OW fork observed by the live adapter receives
+  the BFF-derived UTC bounds as RFC3339 values under `start_date` and
+  `end_date` for the summary/event reads. This is development-only
+  `fork_extension` evidence, not a universal OW public claim.
+- `[PENDING]` Do not generalize the local fork's `start_date`/`end_date` wire
+  encoding to another OW version. Confirm the parameter semantics against an
+  immutable OW reference before real integration.
 - `[FIXED]` `timestamp`, `start_time`, `end_time`, `started_at`, `ended_at`, and
   `last_update` are instants when they include a time; `date` is a logical date.
 - `[FIXED]` `zone_offset` preserves the source offset and is not added twice to
@@ -56,6 +64,22 @@ be invented in the client.
 - `[RISK]` Sleep may group a night by the local date at the end of the session.
   Do not compare `SleepSummary.date` with a UTC timestamp as if they were the
   same field.
+
+### 1.1 Development Date Crosswalk
+
+`[PROPOSED]` The following crosswalk documents only the observed local fork
+behavior used by `apps/bff/src/adapter/live.py`; it is classified as
+`fork_extension` development evidence and is not a claim about every OW API:
+
+| Public BFF input | BFF calculation | Local fork query values |
+|---|---|---|
+| `date=YYYY-MM-DD`, `timezone=IANA` | `[local midnight, next local midnight)` in the requested zone | `start_date=<start UTC RFC3339Z>` and `end_date=<end UTC RFC3339Z>` |
+
+The BFF keeps the logical date in its public response and uses the UTC values
+only at the server-side adapter boundary. The synthetic/base wrapper may omit
+the optional paginated `metadata` member; a local response may include it, but
+the adapter validates only the allowlisted aggregate fields (`resolution`,
+`sample_count`, `start_time`, and `end_time`) and drops the object.
 
 ### Query And Cursor
 
@@ -121,6 +145,9 @@ Timeseries, paginated summaries, and paginated events use an equivalent shape:
 - `has_more` signals that the client must request another page.
 - `total_count` is `integer | null` and may be unavailable; do not use it to
   declare completeness.
+- `metadata` is optional at the adapter boundary. The synthetic/base fixture
+  omits it; when the observed local fork returns it, the adapter validates only
+  the allowlisted aggregate fields and never forwards the raw object.
 - OW may include additional `upstream_observed` wrappers with open fields. They
   are not reproduced in this example or the public fixture.
 - The publishable representation is created later in the BFF and may contain
@@ -661,10 +688,13 @@ person or installation. It must contain only:
   `source_ambiguous`, `pending`, `mismatch`, and `inconclusive`.
 
 `[FIXED]` The OW fixture uses synthetic values and allowlisted fields for the
-server-side adapter; it is not a raw export. It does not reproduce open objects
-or add sync `metadata`, `message`, or `error`. The `public_sync_projection`
-section documents a `BFF_sanitized` output whose implementation status remains
-`[PENDING]`; sanitization belongs to the BFF. The BFF/UI fixture contains only
+server-side adapter; it is not a raw export. Its paginated wrappers omit the
+optional `metadata` member and do not add sync `metadata`, `message`, or
+`error`. The live adapter accepts a local response with `metadata`, validates
+only the allowlisted aggregate fields, and drops the object; raw metadata
+remains `raw_not_public`. The `public_sync_projection` section documents a
+`BFF_sanitized` output whose implementation status remains `[PENDING]`;
+sanitization belongs to the BFF. The BFF/UI fixture contains only
 `BFF_sanitized` outputs and never `raw_not_public` data.
 
 It must not contain realistic UUIDs, MACs, coordinates, routes, tokens, API
