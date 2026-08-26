@@ -10,6 +10,8 @@ import type {
   MetricState,
   MetricUnit,
   OverviewData,
+  ActivityTrendData,
+  ActivityTrendPointMetric,
   RunCounts,
   RunItem,
   RunScope,
@@ -27,6 +29,7 @@ const BASE_FIELDS = ["schemaVersion", "asOf", "timezone", "data", "coverage", "w
 export const API_ROUTES = Object.freeze({
   session: "/api/v1/session",
   overview: "/api/v1/me/verify/overview",
+  activityTrend: "/api/v1/me/verify/activity-trend",
   sources: "/api/v1/me/verify/sources",
   settings: "/api/v1/me/verify/settings",
   runs: "/api/v1/me/verify/runs"
@@ -45,6 +48,7 @@ export const API_ROUTE_PATHS = Object.freeze([
 const QUERY_FIELDS: Record<string, readonly string[]> = {
   [API_ROUTES.session]: [],
   [API_ROUTES.overview]: ["date", "timezone"],
+  [API_ROUTES.activityTrend]: ["date", "timezone", "range"],
   [API_ROUTES.sources]: ["date", "timezone"],
   [API_ROUTES.settings]: [],
   [API_ROUTES.runs]: ["from", "to", "state", "limit", "cursor"]
@@ -840,6 +844,57 @@ export function parseOverviewEnvelope(envelope: Envelope, context?: { date: stri
   return parsed;
 }
 
+export function parseActivityTrendEnvelope(envelope: Envelope, context?: { date: string; timezone: string } | null): Envelope<ActivityTrendData> {
+  const parsed = parseDataEnvelope(envelope, (data) => {
+    onlyKeys(data, ["logicalDate", "range", "steps", "distanceMeters", "points", "bucketMode"], ["logicalDate", "range", "steps", "distanceMeters", "points"]);
+    assert(validDate(data.logicalDate) && ["daily", "7d", "monthly", "180d", "annual"].includes(String(data.range)), "invalid activity trend");
+    const bucketMode = data.bucketMode === undefined ? "daily" : data.bucketMode;
+    assert(bucketMode === "daily" || bucketMode === "calendar-month", "invalid activity trend buckets");
+    const range = data.range as ActivityTrendData["range"];
+    assert(
+      (range === "daily" || range === "7d" || range === "monthly")
+        ? bucketMode === "daily"
+        : bucketMode === "calendar-month",
+      "invalid activity trend bucket mode"
+    );
+    const expectedDays = range === "daily" ? 1 : range === "7d" ? 7 : range === "monthly" ? new Date(Date.UTC(Number(String(data.logicalDate).slice(0, 4)), Number(String(data.logicalDate).slice(5, 7)), 0)).getUTCDate() : range === "180d" ? 180 : (new Date(Date.UTC(Number(String(data.logicalDate).slice(0, 4)), 1, 29)).getUTCDate() === 29 ? 366 : 365);
+    const parseAggregate = (value: unknown, unit: Exclude<MetricUnit, null>): ActivityTrendData["steps"] => {
+      onlyKeys(value, ["unit", "totalObserved", "averageObserved", "observedDays", "expectedDays"], ["unit", "totalObserved", "averageObserved", "observedDays", "expectedDays"]);
+       assert(value.unit === unit && typeof value.observedDays === "number" && Number.isInteger(value.observedDays) && value.observedDays >= 0 && value.observedDays <= expectedDays && value.expectedDays === expectedDays, "invalid trend aggregate");
+      const totalObserved = parseNumber(value.totalObserved, true);
+      const averageObserved = parseNumber(value.averageObserved, true);
+      assert((totalObserved === null || totalObserved >= 0) && (averageObserved === null || averageObserved >= 0), "invalid trend aggregate values");
+       return { unit, totalObserved, averageObserved, observedDays: value.observedDays as number, expectedDays };
+    };
+     assert(Array.isArray(data.points) && data.points.length > 0, "invalid trend points");
+     const expectedDates = range === "daily" ? [String(data.logicalDate)] : range === "7d" ? Array.from({ length: 7 }, (_, index) => {
+         const value = new Date(`${data.logicalDate}T00:00:00Z`);
+         value.setUTCDate(value.getUTCDate() - (6 - index));
+         return value.toISOString().slice(0, 10);
+        }) : range === "monthly" ? Array.from({ length: new Date(Date.UTC(Number(String(data.logicalDate).slice(0, 4)), Number(String(data.logicalDate).slice(5, 7)), 0)).getUTCDate() }, (_, index) => `${String(data.logicalDate).slice(0, 7)}-${String(index + 1).padStart(2, "0")}`) : (() => {
+          const end = new Date(`${String(data.logicalDate)}T00:00:00Z`);
+          const start = range === "annual" ? new Date(Date.UTC(end.getUTCFullYear(), 0, 1)) : new Date(end.getTime() - 179 * 86400000);
+          start.setUTCDate(1);
+          const monthCount = range === "annual"
+            ? 12
+            : (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + end.getUTCMonth() - start.getUTCMonth() + 1;
+          return Array.from({ length: monthCount }, (_, index) => {
+            const month = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + index, 1));
+            return month.toISOString().slice(0, 7) + "-01";
+          });
+        })();
+    const points = data.points.map((point) => {
+      onlyKeys(point, ["date", "steps", "distanceMeters"], ["date", "steps", "distanceMeters"]);
+        const parsePoint = (value: unknown, unit: MetricUnit): ActivityTrendPointMetric => { onlyKeys(value, ["state", "value", "unit"], ["state", "value", "unit"]); assert(typeof value.state === "string" && ["empty", "null", "zero", "value", "partial", "inconclusive", "source_ambiguous"].includes(value.state), "invalid trend point"); const parsed = parseNumber(value.value, true); assert(parsed === null || parsed >= 0, "invalid trend point value"); assert(!["empty", "null", "inconclusive"].includes(value.state) || parsed === null, "invalid trend point value"); assert(!["value", "partial", "source_ambiguous"].includes(value.state) || parsed !== null, "observed trend point has no value"); assert(value.state !== "zero" || parsed === 0, "invalid trend zero"); assert(["empty", "null", "inconclusive"].includes(value.state) || value.unit === unit, "invalid trend point unit"); return { state: value.state as MetricState, value: parsed, unit: value.unit as MetricUnit }; };
+       return { date: String(point.date), steps: parsePoint(point.steps, "count"), distanceMeters: parsePoint(point.distanceMeters, "meters") };
+    });
+     assert(points.every((point, index) => point.date === expectedDates[index]) && new Set(points.map((point) => point.date)).size === expectedDates.length, "invalid trend dates");
+     return { logicalDate: data.logicalDate as string, range, bucketMode: bucketMode as ActivityTrendData["bucketMode"], steps: parseAggregate(data.steps, "count"), distanceMeters: parseAggregate(data.distanceMeters, "meters"), points };
+  });
+  if (context) validateResponseContext(parsed, context);
+  return parsed;
+}
+
 export function parseSourcesEnvelope(envelope: Envelope, context?: { date: string; timezone: string } | null): Envelope<{ items: Source[] }> {
   const parsed = parseDataEnvelope(envelope, (data) => {
     onlyKeys(data, ["items"], ["items"]);
@@ -1014,6 +1069,11 @@ export async function getSession({ signal }: { signal?: AbortSignal } = {}): Pro
 
 export async function getOverview(context: { date: string; timezone: string }, { signal }: { signal?: AbortSignal } = {}): Promise<Envelope<OverviewData>> {
   return parseOverviewEnvelope(await request(queryUrl(API_ROUTES.overview, contextParams(context)), { signal }), context);
+}
+
+export async function getActivityTrend(context: { date: string; timezone: string; range?: string }, { signal }: { signal?: AbortSignal } = {}): Promise<Envelope<ActivityTrendData>> {
+  const params = contextParams(context);
+  return parseActivityTrendEnvelope(await request(queryUrl(API_ROUTES.activityTrend, { ...params, range: context.range || "7d" }), { signal }), context);
 }
 
 export async function getSources(context: { date: string; timezone: string }, { signal }: { signal?: AbortSignal } = {}): Promise<Envelope<{ items: Source[] }>> {

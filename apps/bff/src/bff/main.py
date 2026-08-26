@@ -603,6 +603,27 @@ def create_app(
             )
         )
 
+    @app.get("/api/v1/me/verify/activity-trend")
+    async def get_activity_trend(
+        request: Request,
+        date: str | None = Query(default=None),
+        timezone: str | None = Query(default=None),
+        range: str | None = Query(default=None),
+    ) -> JSONResponse:
+        service.require_active()
+        _reject_query_params(request, frozenset({"date", "timezone", "range"}))
+        logical_date, parsed_date, timezone_name = service.validate_context(
+            date, timezone
+        )
+        return JSONResponse(
+            content=service.activity_trend(
+                logical_date=logical_date,
+                parsed_date=parsed_date,
+                timezone_name=timezone_name,
+                range_name="7d" if range is None else range,
+            )
+        )
+
     @app.get("/api/v1/me/verify/settings")
     async def get_settings(request: Request) -> JSONResponse:
         service.require_active()

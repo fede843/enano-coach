@@ -139,6 +139,11 @@ export interface OverviewData {
   runs?: RunsPageData;
 }
 
+export type ActivityTrendRange = "daily" | "7d" | "monthly" | "180d" | "annual";
+export interface ActivityTrendMetric { unit: Exclude<MetricUnit, null>; totalObserved: number | null; averageObserved: number | null; observedDays: number; expectedDays: number }
+export interface ActivityTrendPointMetric { state: MetricState; value: number | null; unit: MetricUnit }
+export interface ActivityTrendData { logicalDate: string; range: ActivityTrendRange; bucketMode: "daily" | "calendar-month"; steps: ActivityTrendMetric; distanceMeters: ActivityTrendMetric; points: Array<{ date: string; steps: ActivityTrendPointMetric; distanceMeters: ActivityTrendPointMetric }> }
+
 export interface RunCounts {
   recordsSeen: number | null;
   recordsAccepted: number | null;
@@ -228,5 +233,6 @@ export interface AppState {
   retryUntil: number | null;
   retryError: import("./api").ApiError | null;
   page: PageState;
+  activityTrend?: PageState;
   runs: RunsState;
 }

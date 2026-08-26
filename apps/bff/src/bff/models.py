@@ -74,7 +74,10 @@ WARNING_COPY_BY_CODE: dict[WarningCode, frozenset[str]] = {
         {"La p\u00e1gina solicitada expir\u00f3; reinicia el listado."}
     ),
     "INCONCLUSIVE": frozenset(
-        {"No se pudo cerrar la comparaci\u00f3n porque falt\u00f3 una p\u00e1gina."}
+        {
+            "No se pudo cerrar la comparaci\u00f3n porque falt\u00f3 una p\u00e1gina.",
+            "La ventana contiene fechas no \u00fanicas.",
+        }
     ),
     "MISMATCH": frozenset({"El hecho observado no coincide con el esperado."}),
     "NOT_VERIFIABLE": frozenset(
@@ -385,6 +388,59 @@ class OverviewData(StrictModel):
     summary: OverviewSummary
     sources: list[SourceItem] | None = None
     runs: RunListData | None = None
+
+
+class TrendMetric(StrictModel):
+    unit: MetricUnit
+    totalObserved: Number | None
+    averageObserved: Number | None
+    observedDays: StrictInt
+    expectedDays: StrictInt
+
+    @model_validator(mode="after")
+    def validate_aggregate(self) -> "TrendMetric":
+        if self.expectedDays < 1 or not 0 <= self.observedDays <= self.expectedDays:
+            raise ValueError("invalid trend coverage")
+        if self.observedDays == 0 and (
+            self.totalObserved is not None or self.averageObserved is not None
+        ):
+            raise ValueError("empty trend aggregate cannot have values")
+        if self.observedDays > 0 and (
+            self.totalObserved is None or self.averageObserved is None
+        ):
+            raise ValueError("observed trend aggregate requires values")
+        return self
+
+
+class TrendPointMetric(StrictModel):
+    state: MetricState
+    value: Number | None
+    unit: MetricUnit | None
+
+    @model_validator(mode="after")
+    def validate_state_value_unit(self) -> "TrendPointMetric":
+        if self.state in {"empty", "null", "inconclusive"} and self.value is not None:
+            raise ValueError("non-value trend state cannot carry a value")
+        if self.state == "zero" and self.value != 0:
+            raise ValueError("zero trend state requires zero")
+        if self.state in {"value", "partial"} and self.value is None:
+            raise ValueError("observed trend state requires a value")
+        return self
+
+
+class ActivityTrendPoint(StrictModel):
+    date: LogicalDate
+    steps: TrendPointMetric
+    distanceMeters: TrendPointMetric
+
+
+class ActivityTrendData(StrictModel):
+    logicalDate: LogicalDate
+    range: Literal["daily", "7d", "monthly", "180d", "annual"]
+    steps: TrendMetric
+    distanceMeters: TrendMetric
+    points: list[ActivityTrendPoint]
+    bucketMode: Literal["daily", "calendar-month"]
 
 
 class SessionData(StrictModel):

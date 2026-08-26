@@ -11,7 +11,9 @@ from adapter.offline import FixtureContractError, OfflineFixtureAdapter
 from .config import Settings
 from .errors import ErrorCode, error_for
 from .models import CreateRunBody
+from .ranges import TREND_RANGES, trend_date_scope
 from .serializers import (
+    serialize_activity_trend,
     serialize_overview,
     serialize_run_create,
     serialize_run_detail,
@@ -98,6 +100,9 @@ class _OfflineAdapterBoundary:
         del owner_context
         return self.adapter.get_bff_response(case)
 
+    def get_ow_response(self, case: str) -> dict[str, Any]:
+        return self.adapter.get_ow_response(case)
+
 
 class _OwnerBoundAdapter:
     def __init__(self, adapter: Any, owner_context: OwnerContext) -> None:
@@ -150,6 +155,239 @@ def local_midnight_window(
         for value in (start, end)
     )
     return values[0], values[1]
+
+
+def local_activity_trend_window(
+    logical_date: date_type, timezone_name: str
+) -> tuple[str, str]:
+    return local_trend_window(logical_date, "7d", timezone_name)
+
+
+def local_trend_window(
+    logical_date: date_type, range_name: str, timezone_name: str
+) -> tuple[str, str]:
+    start_date, end_date, _ = trend_date_scope(logical_date, range_name)
+    start, _ = local_midnight_window(start_date, timezone_name)
+    _, end = local_midnight_window(end_date, timezone_name)
+    return start, end
+
+
+def aggregate_activity_trend(
+    logical_date: date_type,
+    rows: list[dict[str, Any]],
+    *,
+    timezone_name: str,
+    range_name: str = "7d",
+) -> dict[str, Any]:
+    if range_name not in TREND_RANGES:
+        raise error_for("INVALID_QUERY", field="range")
+    start_date, end_date, expected_labels = trend_date_scope(logical_date, range_name)
+    dates = [
+        start_date + timedelta(days=offset)
+        for offset in range((end_date - start_date).days + 1)
+    ]
+    expected_dates = {item.isoformat() for item in dates}
+    by_date: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if row.get("date") in expected_dates:
+            by_date.setdefault(row["date"], []).append(row)
+    duplicate_dates = {day for day, items in by_date.items() if len(items) > 1}
+    non_duplicate_source_keys = {
+        row.get("source", {}).get("source")
+        for day, items in by_date.items()
+        if day not in duplicate_dates
+        for row in items
+        if isinstance(row.get("source"), dict)
+        and row.get("source", {}).get("source") is not None
+    }
+
+    def metric(items: list[dict[str, Any]], field: str, unit: str) -> dict[str, Any]:
+        if not items:
+            return {"state": "empty", "value": None, "unit": None}
+        if len(items) != 1:
+            state = (
+                "inconclusive"
+                if items[0].get("date") in duplicate_dates
+                else "source_ambiguous"
+            )
+            return {"state": state, "value": None, "unit": None}
+        value = items[0].get(field)
+        return {
+            "state": "null" if value is None else "zero" if value == 0 else "value",
+            "value": value,
+            "unit": None if value is None else unit,
+        }
+
+    daily_points = [
+        {
+            "date": item.isoformat(),
+            "steps": metric(by_date.get(item.isoformat(), []), "steps", "count"),
+            "distanceMeters": metric(
+                by_date.get(item.isoformat(), []), "distance_meters", "meters"
+            ),
+        }
+        for item in dates
+    ]
+
+    def summary(
+        field: str, unit: str, point_values: list[dict[str, Any]], expected_days: int
+    ) -> dict[str, Any]:
+        if len(non_duplicate_source_keys) > 1:
+            return {
+                "unit": unit,
+                "totalObserved": None,
+                "averageObserved": None,
+                "observedDays": 0,
+                "expectedDays": expected_days,
+            }
+        values = [
+            point[field]["value"]
+            for point in point_values
+            if point[field]["state"] in {"value", "zero", "partial"}
+        ]
+        return {
+            "unit": unit,
+            "totalObserved": sum(values) if values else None,
+            "averageObserved": sum(values) / len(values) if values else None,
+            "observedDays": len(values),
+            "expectedDays": expected_days,
+        }
+
+    def bucket_points() -> list[dict[str, Any]]:
+        if range_name in {"daily", "7d", "monthly"}:
+            return daily_points
+        buckets: dict[str, list[dict[str, Any]]] = {
+            label: [] for label in expected_labels
+        }
+        for point in daily_points:
+            buckets.setdefault(point["date"][:7] + "-01", []).append(point)
+
+        def bucket_metric(
+            items: list[dict[str, Any]], field: str, unit: str
+        ) -> dict[str, Any]:
+            states = [item[field]["state"] for item in items]
+            if "inconclusive" in states:
+                return {"state": "inconclusive", "value": None, "unit": None}
+            if "source_ambiguous" in states:
+                return {"state": "source_ambiguous", "value": None, "unit": None}
+            values = [
+                item[field]["value"]
+                for item in items
+                if item[field]["state"] in {"value", "zero", "partial"}
+                and item[field]["value"] is not None
+            ]
+            if not values:
+                return {
+                    "state": "null" if "null" in states else "empty",
+                    "value": None,
+                    "unit": None,
+                }
+            total = sum(values)
+            return {
+                "state": (
+                    "zero"
+                    if total == 0
+                    and all(
+                        item[field]["state"] == "zero"
+                        for item in items
+                        if item[field]["state"] != "empty"
+                    )
+                    else "value"
+                ),
+                "value": total,
+                "unit": unit,
+            }
+
+        return [
+            {
+                "date": bucket,
+                "steps": bucket_metric(items, "steps", "count"),
+                "distanceMeters": bucket_metric(items, "distanceMeters", "meters"),
+            }
+            for bucket, items in buckets.items()
+        ]
+
+    points = (
+        daily_points if range_name in {"daily", "7d", "monthly"} else bucket_points()
+    )
+    expected_days = (end_date - start_date).days + 1
+
+    ambiguous = any(
+        point[name]["state"] == "source_ambiguous"
+        for point in points
+        for name in ("steps", "distanceMeters")
+    )
+    complete = all(
+        point[name]["state"] in {"value", "zero"}
+        for point in points
+        for name in ("steps", "distanceMeters")
+    )
+    warnings = []
+    if not complete:
+        warnings.append(
+            {
+                "code": "PARTIAL_COVERAGE",
+                "severity": "warning",
+                "message": "La ventana no se pudo cerrar por completo.",
+                "domain": "activity",
+            }
+        )
+    if ambiguous:
+        warnings.append(
+            {
+                "code": "SOURCE_AMBIGUOUS",
+                "severity": "warning",
+                "message": "La atribución requiere una regla adicional.",
+                "domain": "activity",
+            }
+        )
+    if len(non_duplicate_source_keys) > 1:
+        warnings.append(
+            {
+                "code": "SOURCE_AMBIGUOUS",
+                "severity": "warning",
+                "message": "La ventana contiene más de una fuente observada.",
+                "domain": "activity",
+            }
+        )
+    if any(
+        point[name]["state"] == "inconclusive"
+        for point in points
+        for name in ("steps", "distanceMeters")
+    ):
+        warnings.append(
+            {
+                "code": "INCONCLUSIVE",
+                "severity": "warning",
+                "message": "La ventana contiene fechas no únicas.",
+                "domain": "activity",
+            }
+        )
+    available_days = sum(
+        1
+        for point in points
+        if any(point[name]["state"] != "empty" for name in ("steps", "distanceMeters"))
+    )
+    return {
+        "logicalDate": logical_date.isoformat(),
+        "range": range_name,
+        # Aggregated buckets are for display; totals and averages remain based
+        # on the canonical observed daily summaries.
+        "steps": summary("steps", "count", daily_points, expected_days),
+        "distanceMeters": summary(
+            "distanceMeters", "meters", daily_points, expected_days
+        ),
+        "points": points,
+        "coverage": {
+            "expectedDays": expected_days,
+            "availableDays": available_days,
+            # An observed-but-incomplete window is partial; an empty window is
+            # complete with no observations.
+            "isPartial": available_days > 0 and not complete,
+        },
+        "warnings": warnings,
+        "bucketMode": "calendar-month" if range_name in {"180d", "annual"} else "daily",
+    }
 
 
 def normalize_run_state(
@@ -306,6 +544,49 @@ class BFFService:
             from_utc=start,
             to_utc=end,
             allow_empty_date_projection=case == "overview_empty",
+        )
+
+    def activity_trend(
+        self,
+        *,
+        logical_date: str,
+        parsed_date: date_type,
+        timezone_name: str,
+        range_name: str,
+    ) -> dict[str, Any]:
+        start, end = local_trend_window(parsed_date, range_name, timezone_name)
+        getter = getattr(self.adapter, "get_activity_trend_response", None)
+        if getter is not None:
+            response = getter(
+                logical_date=logical_date,
+                timezone_name=timezone_name,
+                start_utc=start,
+                end_utc=end,
+                range_name=range_name,
+                owner_context=self._owner_context(),
+            )
+        else:
+            rows = self.adapter.get_ow_response("activity_summary")["data"]
+            data = aggregate_activity_trend(
+                parsed_date, rows, timezone_name=timezone_name, range_name=range_name
+            )
+            coverage = data.pop("coverage")
+            warnings = data.pop("warnings")
+            response = {
+                "schemaVersion": "1",
+                "asOf": "2024-01-02T12:30:00Z",
+                "timezone": timezone_name,
+                "data": data,
+                "coverage": coverage,
+                "warnings": warnings,
+                "extensions": {},
+            }
+        return serialize_activity_trend(
+            response,
+            logical_date=logical_date,
+            timezone_name=timezone_name,
+            from_utc=start,
+            to_utc=end,
         )
 
     def sources(self, *, logical_date: str, timezone_name: str) -> dict[str, Any]:

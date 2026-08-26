@@ -20,6 +20,7 @@ import {
   formatCoverageFraction,
   formatMetricDetail,
   formatMetricValue,
+  formatNumber,
   formatResultNumber,
   formatTimestamp,
   formatUtcTimestamp,
@@ -34,6 +35,8 @@ import type {
   Envelope,
   Metric,
   OverviewData,
+  ActivityTrendData,
+  ActivityTrendRange,
   RunItem,
   SettingsData,
   Source,
@@ -65,6 +68,10 @@ export interface ViewActions {
   onContextSubmit(event: FormEvent<HTMLFormElement>): void;
   onRunsSubmit(event: FormEvent<HTMLFormElement>): void;
   onAction(action: ViewAction): void;
+  trendRange?: ActivityTrendRange;
+  setTrendRange?(range: ActivityTrendRange): void;
+  shiftTrend?(direction: -1 | 1): void;
+  trendRanges?: Array<{ value: ActivityTrendRange; label: string }>;
 }
 
 function currentNav(routeName: AppState["route"]["name"]): string {
@@ -292,14 +299,127 @@ function scopeNote(envelope: Envelope): ReactElement {
   );
 }
 
+export function trendPointText(state: string, value: number | null, unit: string): string {
+  if (state === "empty") return "Ausente";
+  if (state === "null") return "Sin medición";
+  if (state === "partial" && value === null) return "Parcial";
+  if (state === "source_ambiguous") return "Fuente ambigua";
+  if (state === "inconclusive") return "Inconclusa";
+  if (value === null) return "Sin medición";
+  return `${value.toLocaleString("es-ES")} ${unit}`;
+}
+
+function trendQuickLabel(range: ActivityTrendRange): string {
+  return { daily: "Diario", "7d": "7D", monthly: "1M", "180d": "180D", annual: "Anual" }[range];
+}
+
+export function formatTrendRangeLabel(range: ActivityTrendRange): string {
+  return {
+    daily: "Diario",
+    "7d": "7 días",
+    monthly: "Mensual",
+    "180d": "180 días",
+    annual: "Anual"
+  }[range];
+}
+
+export function formatTrendBucketLabel(date: string): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed.getTime())) return date;
+  return new Intl.DateTimeFormat("es-ES", { month: "long", year: "numeric", timeZone: "UTC" }).format(parsed);
+}
+
+export function formatTrendPointLabel(date: string, range: ActivityTrendRange | "calendar-month"): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (!Number.isFinite(parsed.getTime())) return date;
+  if (range === "calendar-month") {
+    return new Intl.DateTimeFormat("es-ES", { month: "short", timeZone: "UTC" }).format(parsed).replace(".", "");
+  }
+  if (range === "monthly") {
+    return new Intl.DateTimeFormat("es-ES", { day: "2-digit", timeZone: "UTC" }).format(parsed);
+  }
+  return new Intl.DateTimeFormat("es-ES", { weekday: "short", day: "2-digit", timeZone: "UTC" }).format(parsed).replace(".", "");
+}
+
+export function trendBarHeight(state: string, value: number | null, total: number | null): string {
+  const numericState = state === "value" || (state === "partial" && value !== null) || state === "zero";
+  if (!numericState || value === null || !Number.isFinite(value) || value < 0 || total === null || !Number.isFinite(total) || total <= 0) return "0%";
+  return `${(value / total) * 100}%`;
+}
+
+export function trendMetricMaximum(points: ActivityTrendData["points"], metric: "steps" | "distanceMeters"): number {
+  return Math.max(0, ...points.flatMap((point) => {
+    const value = point[metric].value;
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? [value] : [];
+  }));
+}
+
+export function trendAxisTicks(maximum: number): number[] {
+  if (!Number.isFinite(maximum) || maximum <= 0) return [0, 0, 0];
+  return [maximum, maximum / 2, 0];
+}
+
+export function trendAxisTickLabel(value: number, metric: "steps" | "distanceMeters"): string {
+  if (metric === "steps") return Math.round(value).toLocaleString("es-ES");
+  if (value >= 1000) return `${(value / 1000).toLocaleString("es-ES", { maximumFractionDigits: 1 })} km`;
+  return `${Math.round(value).toLocaleString("es-ES")} m`;
+}
+
+function trendBarTitle(point: ActivityTrendData["points"][number], key: "steps" | "distanceMeters", unit: string): string {
+  const metric = point[key];
+  return `${key === "steps" ? "Pasos" : "Distancia"}: ${trendPointText(metric.state, metric.value, unit)} · Estado: ${safeStateCopy(metric.state).label}`;
+}
+
+export function trendGuidePosition(average: number | null, maximum: number | null): string | null {
+  if (typeof average !== "number" || !Number.isFinite(average) || average < 0 || typeof maximum !== "number" || !Number.isFinite(maximum) || maximum < 0) return null;
+  if (maximum === 0) return average === 0 ? "0%" : null;
+  return `${Math.min(100, (average / maximum) * 100)}%`;
+}
+
+function trendAverageGuide(metric: ActivityTrendData["steps"], maximum: number): ReactElement | null {
+  const position = trendGuidePosition(metric.averageObserved, maximum);
+  if (position === null) return null;
+  return <div className="trend-average-guide" style={{ bottom: position }} aria-hidden="true" />;
+}
+
+export function trendMetricText(metric: ActivityTrendData["steps"], kind: "total" | "average"): string {
+  const value = kind === "total" ? metric.totalObserved : metric.averageObserved;
+  return formatNumber(kind === "average" && value !== null ? Math.round(value) : value);
+}
+
+function trendAggregateText(metric: ActivityTrendData["steps"], kind: "total" | "average", unit: string): string {
+  const text = trendMetricText(metric, kind);
+  return text === "Sin medición" || !unit ? text : `${text} ${unit}`;
+}
+
+function trendSeries(metric: ActivityTrendData["steps"], points: ActivityTrendData["points"], key: "steps" | "distanceMeters", label: string, unit: string, range: ActivityTrendRange | "calendar-month"): ReactElement {
+  const maximum = trendMetricMaximum(points, key);
+  const axisMetric = key === "steps" ? "steps" : "distanceMeters";
+  return <div className={`trend-series trend-${axisMetric}`}><div className="trend-bar-group-label">{label}</div><div className="trend-axis" aria-label={`Escala de ${label}`}>{trendAxisTicks(maximum).map((tick) => <span key={tick}>{trendAxisTickLabel(tick, axisMetric)}</span>)}</div><div className="trend-plot-area"><div className="trend-plot">{trendAverageGuide(metric, maximum)}{points.map((point) => { const tooltip = trendBarTitle(point, key, unit); const title = `${point.date} · ${tooltip}`; const isNumeric = point[key].value !== null && ["value", "partial", "zero"].includes(point[key].state); return <div className={`trend-bar trend-${point[key].state}${isNumeric ? " trend-bar-numeric" : ""}`} key={`${key}-${point.date}`} tabIndex={isNumeric ? 0 : undefined} title={title} data-tooltip={isNumeric ? tooltip : undefined} aria-label={`${point.date}: ${trendPointText(point[key].state, point[key].value, unit)}; estado ${safeStateCopy(point[key].state).label}`} style={{ height: trendBarHeight(point[key].state, point[key].value, maximum) }} />; })}</div><div className="trend-bar-labels" aria-hidden="true">{points.map((point) => <span key={`${key}-label-${point.date}`} title={point.date}>{formatTrendPointLabel(point.date, range)}</span>)}</div></div></div>;
+}
+
+function trendBucketSummary(trend: ActivityTrendData): ReactElement {
+  return <ul className="trend-bucket-summary" aria-label="Resumen accesible de buckets de actividad">{trend.points.map((point) => <li key={point.date}><strong>{formatTrendBucketLabel(point.date)}</strong><span className="visually-hidden"> ({point.date})</span><span>Pasos: {trendPointText(point.steps.state, point.steps.value, "pasos")}</span><span>Distancia: {trendPointText(point.distanceMeters.state, point.distanceMeters.value, "m")}</span></li>)}</ul>;
+}
+
 function overviewPage(state: AppState, actions: ViewActions): ReactElement {
   const envelope = state.page.envelope as Envelope<OverviewData>;
   const data = envelope.data;
   const summary = data?.summary || {};
+  const trendPage = state.activityTrend || { status: "idle" as const, envelope: null, error: null };
+  const trend = trendPage.envelope?.data as ActivityTrendData | null;
   const observedSummary = Object.values(summary).filter((metric) => metric.state !== "unsupported");
   const fieldCount = observedSummary.length;
   const isEmpty = fieldCount === 0 && envelope.coverage.availableDays === 0;
-  return (
+    const trendContent = trend ? <section className="trend-panel" aria-labelledby="activity-trend-title">
+       <div className="section-heading"><div><p className="eyebrow">TENDENCIA DE ACTIVIDAD</p><h2 id="activity-trend-title">Actividad por ventana</h2><p className="trend-coverage-note">Fin lógico seleccionado: {trend.logicalDate}. {trend.steps.observedDays} de {trend.steps.expectedDays} días con pasos; los datos observados conservan su estado.</p></div><span className="section-aside">{formatTrendRangeLabel(trend.range)}</span></div>
+        <div className="trend-controls" aria-label="Controles de ventana de tendencia"><button className="button button-secondary trend-arrow" type="button" aria-label="Ventana anterior" onClick={() => actions.shiftTrend?.(-1)}>←</button><div className="trend-quick-ranges" role="group" aria-label="Seleccionar ventana">{(actions.trendRanges || [{ value: "7d", label: "7 días" }]).map((range) => <button className={`trend-quick-range${range.value === (actions.trendRange || "7d") ? " is-selected" : ""}`} type="button" key={range.value} aria-label={`Seleccionar ventana ${trendQuickLabel(range.value)}`} aria-current={range.value === (actions.trendRange || "7d") ? "true" : undefined} aria-pressed={range.value === (actions.trendRange || "7d")} onClick={() => actions.setTrendRange?.(range.value)}>{trendQuickLabel(range.value)}</button>)}</div><button className="button button-secondary trend-arrow" type="button" aria-label="Ventana siguiente" disabled={trend.logicalDate >= new Date().toISOString().slice(0, 10)} onClick={() => actions.shiftTrend?.(1)}>→</button></div>
+       <div className="trend-summary"><span>Total pasos: <strong>{trendAggregateText(trend.steps, "total", "")}</strong></span><span>Promedio pasos: <strong>{trendAggregateText(trend.steps, "average", "")}</strong></span><span>Total distancia: <strong>{trendAggregateText(trend.distanceMeters, "total", "m")}</strong></span><span>Promedio distancia: <strong>{trendAggregateText(trend.distanceMeters, "average", "m")}</strong></span><span>Cobertura: <strong>{trend.steps.observedDays} / {trend.steps.expectedDays} días</strong></span></div><div className="trend-legend" aria-label="Leyenda de la tendencia"><span><i className="trend-legend-line" aria-hidden="true" /> Promedio observado</span><span><i className="trend-legend-absence" aria-hidden="true" /> Ausencia conservada en altura y estado</span></div>
+       <p className="trend-bucket-label">{trend.bucketMode === "calendar-month" ? "Resumen mensual: buckets por mes calendario" : "Buckets por día"}</p>
+        <div className="trend-bars" aria-label={`Series separadas de pasos y distancia por ${trend.bucketMode === "calendar-month" ? "mes" : "día"}`}>{trendSeries(trend.steps, trend.points, "steps", "Pasos", "pasos", trend.bucketMode === "calendar-month" ? "calendar-month" : trend.range)}{trendSeries(trend.distanceMeters, trend.points, "distanceMeters", "Distancia", "m", trend.bucketMode === "calendar-month" ? "calendar-month" : trend.range)}</div>
+        {trend.bucketMode === "calendar-month" ? trendBucketSummary(trend) : null}
+   </section> : null;
+   return (
     <>
       {contextForm(state, actions)}
       {coveragePanel(envelope)}
@@ -311,7 +431,8 @@ function overviewPage(state: AppState, actions: ViewActions): ReactElement {
           </div>
         </section>
       )}
-      {warningsPanel(envelope.warnings)}
+       {trendPage.status === "loading" ? <section className="trend-panel" aria-label="Tendencia de actividad" aria-busy="true">Cargando tendencia de actividad…</section> : trendPage.status === "error" ? <section className="trend-panel" role="status">No se pudo cargar la tendencia de actividad; el resumen diario sigue disponible.</section> : trendContent}
+       {warningsPanel(envelope.warnings)}
       {scopeNote(envelope)}
     </>
   );

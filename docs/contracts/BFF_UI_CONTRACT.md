@@ -159,6 +159,18 @@ session except `GET /api/v1/session`. They are not a generic OW proxy.
 `/api/v1/me/verify/...` is the complete BFF route prefix. This contract does not
 define `/verify/...` as a public BFF route or endpoint shorthand.
 
+`GET /api/v1/me/verify/activity-trend` accepts `range=daily|7d|monthly|180d|annual`.
+The selected `date` is the inclusive logical end date. `daily` returns one day;
+`7d` returns the seven inclusive daily dates; `monthly` uses the containing
+calendar month; `180d` covers the inclusive 180-day date window; and `annual`
+uses the containing calendar year (365 or 366 days). All boundaries are built as
+local midnights in the requested IANA timezone and sent server-side as the
+half-open UTC window `[from,to)`. Daily activity summaries are canonical. The
+first implementation retains daily points for `daily`, `7d`, and `monthly`, and
+uses calendar-month buckets for `180d` and `annual`; bucket labels are the first
+day of the calendar month. Totals and averages use observed numeric values only;
+missing, null, zero, partial, ambiguous, and inconclusive states remain distinct.
+
 | Method | Route | Query/body | Result |
 |---|---|---|---|
 | `GET` | `/api/v1/session` | none | Session and access state without `userId`. |

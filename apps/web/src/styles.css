@@ -583,6 +583,37 @@ button:disabled {
   margin-bottom: 2.6rem;
 }
 
+.trend-panel { min-width: 0; margin: 1.4rem 0 2.6rem; padding: 1.35rem; border: 1px solid var(--line-dark); background: var(--paper-bright); }
+.trend-controls { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin: 1rem 0; }
+.trend-arrow { flex: 0 0 auto; min-width: 2.7rem; padding-inline: .55rem; }
+.trend-quick-ranges { display: flex; min-width: 0; flex: 1 1 auto; justify-content: center; gap: .25rem; }
+.trend-quick-range { min-height: 2.1rem; padding: .35rem .55rem; border: 1px solid var(--line-dark); background: var(--paper-bright); color: var(--ink-soft); font: 700 .68rem var(--mono); }
+.trend-quick-range:hover, .trend-quick-range.is-selected { border-color: var(--ink); background: var(--ink); color: var(--paper-bright); }
+.trend-summary { display: flex; flex-wrap: wrap; gap: 1rem; color: var(--muted); font-family: var(--mono); font-size: .72rem; }
+.trend-summary strong { color: var(--ink); }
+.trend-legend { display: flex; flex-wrap: wrap; gap: .8rem 1.2rem; margin-top: .85rem; color: var(--muted); font: .68rem var(--mono); }
+.trend-legend span { display: inline-flex; align-items: center; gap: .35rem; }
+.trend-legend-line { width: 1.3rem; border-top: 2px dotted var(--coral-dark); }
+.trend-legend-absence { width: .75rem; height: .75rem; border: 1px solid var(--line-dark); background: repeating-linear-gradient(135deg, var(--line), var(--line) 3px, transparent 3px, transparent 6px); }
+.trend-bars { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.1rem; margin: 1.4rem 0; min-width: 0; }
+.trend-series { position: relative; display: grid; grid-template-columns: auto minmax(2.7rem, 3.5rem) minmax(0, 1fr); align-items: stretch; gap: .7rem; min-width: 0; padding: .8rem .75rem .75rem; border-bottom: 2px solid var(--ink); background: #f8f3e6; }
+.trend-series .trend-bar-group-label { align-self: start; padding-top: .2rem; font: 700 .7rem var(--mono); }
+.trend-axis { display: flex; height: 10rem; flex-direction: column; justify-content: space-between; align-items: end; color: var(--muted); font: .62rem var(--mono); line-height: 1; }
+.trend-plot-area { min-width: 0; }
+.trend-plot { position: relative; display: flex; align-items: end; gap: clamp(.12rem, .45vw, .45rem); height: 10rem; min-width: 0; border-left: 1px solid var(--line-dark); border-bottom: 1px solid var(--line-dark); background: repeating-linear-gradient(to bottom, transparent 0, transparent calc(50% - 1px), rgba(154, 152, 143, .25) 50%, transparent calc(50% + 1px)); }
+.trend-bar-labels { display: flex; gap: clamp(.12rem, .45vw, .45rem); min-width: 0; padding-top: .35rem; color: var(--muted); font: .58rem var(--mono); text-align: center; }
+.trend-bar-labels span { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; }
+.trend-bar.trend-empty, .trend-bar.trend-null, .trend-bar.trend-source_ambiguous, .trend-bar.trend-inconclusive { height: 0 !important; }
+.trend-bar { position: relative; flex: 1 1 0; min-width: 0; background: var(--mint-deep); border: 1px solid var(--ink); }
+.trend-bar-numeric { min-height: .3rem; }
+.trend-bar-numeric::after { position: absolute; bottom: calc(100% + .45rem); left: 50%; z-index: 4; display: none; max-width: min(18rem, 70vw); padding: .4rem .5rem; transform: translateX(-50%); border: 1px solid var(--ink); background: var(--ink); color: var(--paper-bright); content: attr(data-tooltip); font: 700 .65rem/1.35 var(--mono); pointer-events: none; white-space: normal; }
+.trend-bar-numeric:hover::after, .trend-bar-numeric:focus-visible::after { display: block; }
+.trend-bar:focus-visible { z-index: 3; outline: 3px solid var(--coral); outline-offset: 2px; }
+.trend-average-guide { position: absolute; right: 0; left: 0; z-index: 2; border-top: 2px dotted var(--coral-dark); pointer-events: none; }
+.trend-empty, .trend-null { background: repeating-linear-gradient(135deg, var(--line), var(--line) 4px, transparent 4px, transparent 8px); }
+.trend-zero { background: var(--coral); }
+.trend-coverage-note { margin: .45rem 0 0; color: var(--muted); font: .7rem var(--mono); }
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1548,6 +1579,25 @@ code {
   .settings-grid,
   .capability-grid {
     grid-template-columns: 1fr;
+  }
+
+  .trend-panel {
+    padding: 1rem;
+  }
+
+  .trend-quick-range {
+    flex: 1 1 0;
+    padding-inline: .25rem;
+  }
+
+  .trend-series {
+    grid-template-columns: auto minmax(2.5rem, 3rem) minmax(0, 1fr);
+    padding-inline: .45rem;
+  }
+
+  .trend-axis,
+  .trend-plot {
+    height: 8.5rem;
   }
 
   .metric-card {

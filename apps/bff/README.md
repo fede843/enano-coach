@@ -26,6 +26,10 @@ mode remains the default.
   against a reproducible OW reference.
 - The BFF owns explicit, route-specific response models and projections. Adapter
   envelopes are never returned directly to the browser.
+- Activity trends accept only `daily`, `7d`, `monthly`, `180d`, or `annual`.
+  The selected logical date is the inclusive end date; daily summaries remain
+  canonical, with daily points through `monthly` and calendar-month buckets for
+  longer windows.
 - Synthetic session modes are local development fixtures, not production
   authentication. They do not implement OIDC, real cookie sessions, ownership
   storage, or rate limiting. Origin checking is only a local mutation guard and

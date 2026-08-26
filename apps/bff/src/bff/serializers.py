@@ -15,6 +15,7 @@ from .models import (
     WARNING_COPY_BY_CODE,
     WARNING_DOMAIN_RULES,
     AccessState,
+    ActivityTrendData,
     CapabilityExtension,
     Coverage,
     DomainCoverage,
@@ -45,6 +46,7 @@ from .models import (
     VerificationRun,
     WarningModel,
 )
+from .ranges import trend_date_scope
 
 _TIMESTAMP_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
 _SAFE_SOURCE_LABELS = {
@@ -1970,6 +1972,138 @@ def serialize_overview(
         timezone_name=timezone_name,
         requested=requested,
         daily_overview=True,
+        replace_requested_context=True,
+    )
+
+
+@_serializer_boundary
+def serialize_activity_trend(
+    raw: Mapping[str, Any],
+    *,
+    logical_date: str,
+    timezone_name: str,
+    from_utc: str,
+    to_utc: str,
+) -> dict[str, Any]:
+    raw_data = _mapping(raw.get("data"))
+    if set(raw_data) != {
+        "logicalDate",
+        "range",
+        "steps",
+        "distanceMeters",
+        "points",
+        "bucketMode",
+    }:
+        raise error_for("UPSTREAM_INVALID")
+    range_name = raw_data["range"]
+    if range_name not in {"daily", "7d", "monthly", "180d", "annual"}:
+        raise error_for("UPSTREAM_INVALID")
+    if raw_data["bucketMode"] not in {"daily", "calendar-month"}:
+        raise error_for("UPSTREAM_INVALID")
+    points = raw_data["points"]
+    if not isinstance(points, Sequence) or not points:
+        raise error_for("UPSTREAM_INVALID")
+    point_values = []
+    _, _, expected_dates = trend_date_scope(
+        date.fromisoformat(logical_date), range_name
+    )
+    if raw_data["logicalDate"] != logical_date:
+        raise error_for("UPSTREAM_INVALID")
+    seen_dates: list[str] = []
+    for point in points:
+        point_raw = _mapping(point)
+        if set(point_raw) != {"date", "steps", "distanceMeters"}:
+            raise error_for("UPSTREAM_INVALID")
+        point_date = _logical_date(point_raw["date"])
+        seen_dates.append(point_date)
+        values: dict[str, Any] = {"date": point_date}
+        for key in ("steps", "distanceMeters"):
+            metric = _mapping(point_raw[key])
+            if set(metric) != {"state", "value", "unit"} or metric["state"] not in {
+                "empty",
+                "inconclusive",
+                "null",
+                "partial",
+                "zero",
+                "value",
+                "source_ambiguous",
+            }:
+                raise error_for("UPSTREAM_INVALID")
+            value = _safe_number(metric.get("value"), optional=True)
+            if (
+                metric["state"] in {"empty", "null", "inconclusive"}
+                and value is not None
+            ):
+                raise error_for("UPSTREAM_INVALID")
+            expected_unit = "count" if key == "steps" else "meters"
+            if (
+                metric["state"] in {"value", "partial", "zero"}
+                and metric.get("unit") != expected_unit
+            ):
+                raise error_for("UPSTREAM_INVALID")
+            if metric["state"] in {
+                "empty",
+                "null",
+                "inconclusive",
+                "source_ambiguous",
+            } and metric.get("unit") not in {None, expected_unit}:
+                raise error_for("UPSTREAM_INVALID")
+            if metric["state"] == "zero" and value != 0:
+                raise error_for("UPSTREAM_INVALID")
+            if metric["state"] == "value" and value is None:
+                raise error_for("UPSTREAM_INVALID")
+            values[key] = {
+                "state": metric["state"],
+                "value": value,
+                "unit": metric.get("unit"),
+            }
+        point_values.append(values)
+    if seen_dates != expected_dates or len(set(seen_dates)) != len(expected_dates):
+        raise error_for("UPSTREAM_INVALID")
+    for metric_name in ("steps", "distanceMeters"):
+        metric = _mapping(raw_data[metric_name])
+        if set(metric) != {
+            "unit",
+            "totalObserved",
+            "averageObserved",
+            "observedDays",
+            "expectedDays",
+        }:
+            raise error_for("UPSTREAM_INVALID")
+        if (
+            metric["unit"] not in {"count", "meters"}
+            or _safe_int(metric["observedDays"]) < 0
+            or _safe_int(metric["expectedDays"]) < 1
+        ):
+            raise error_for("UPSTREAM_INVALID")
+        total = _safe_number(metric["totalObserved"], optional=True)
+        average = _safe_number(metric["averageObserved"], optional=True)
+        if (_safe_int(metric["observedDays"]) == 0) != (
+            total is None and average is None
+        ):
+            raise error_for("UPSTREAM_INVALID")
+    data = _model(
+        ActivityTrendData,
+        {
+            "logicalDate": logical_date,
+            "range": range_name,
+            "steps": raw_data["steps"],
+            "distanceMeters": raw_data["distanceMeters"],
+            "points": point_values,
+            "bucketMode": raw_data["bucketMode"],
+        },
+    )
+    requested = {
+        "logicalDate": logical_date,
+        "from": from_utc,
+        "to": to_utc,
+        "timezone": timezone_name,
+    }
+    return _envelope(
+        data,
+        raw=raw,
+        timezone_name=timezone_name,
+        requested=requested,
         replace_requested_context=True,
     )
 

@@ -9,6 +9,7 @@ import {
   queryKeys,
   useCreateRunMutation,
   useOverviewQuery,
+  useActivityTrendQuery,
   useRunDetailQuery,
   useRunsQuery,
   useSessionQuery,
@@ -20,6 +21,7 @@ import { AppView, type ViewAction, type ViewActions } from "./view";
 import type {
   AppRoute,
   AppState,
+  ActivityTrendRange,
   Envelope,
   PageState,
   RunsState,
@@ -36,6 +38,22 @@ function currentLocalDate(): string {
 const DEFAULT_TIMEZONE = "UTC";
 
 type Context = { date: string; timezone: string };
+export const TREND_RANGES: Array<{ value: ActivityTrendRange; label: string }> = [
+  { value: "daily", label: "Diario" }, { value: "7d", label: "7 días" }, { value: "monthly", label: "Mensual" }, { value: "180d", label: "180 días" }, { value: "annual", label: "Anual" }
+];
+function todayInTimezone(timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
+}
+
+export function shiftTrendDate(dateValue: string, range: ActivityTrendRange, direction: -1 | 1, today: string): string {
+  const current = new Date(`${dateValue}T00:00:00Z`);
+  if (range === "daily") current.setUTCDate(current.getUTCDate() + direction);
+  else if (range === "7d" || range === "180d") current.setUTCDate(current.getUTCDate() + direction * (range === "7d" ? 7 : 180));
+  else if (range === "monthly") current.setUTCMonth(current.getUTCMonth() + direction, 1);
+  else current.setUTCFullYear(current.getUTCFullYear() + direction);
+  const next = current.toISOString().slice(0, 10);
+  return next > today ? dateValue : next;
+}
 type RunFilters = { from: string; to: string; state: string };
 
 export function routeFromPath(pathname: string): AppRoute {
@@ -78,6 +96,7 @@ export function initialState(pathname = typeof window === "undefined" ? "/verify
     retryUntil: null,
     retryError: null,
     page: { status: "loading", envelope: null, error: null },
+    activityTrend: emptyPage(),
     runs: initialRuns()
   };
 }
@@ -148,6 +167,7 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
     ? { ...routeFromLocation, runKey: params.runKey || routeFromLocation.runKey }
     : routeFromLocation;
   const [filters, setFilters] = useState<RunFilters>({ from: "", to: "", state: "" });
+  const [trendRange, setTrendRange] = useState<ActivityTrendRange>("7d");
   const [createKey, setCreateKey] = useState<IdempotencyKey | null>(null);
   const [createLocalError, setCreateLocalError] = useState<ApiError | null>(null);
   const focusMainAfterRender = useRef(false);
@@ -159,6 +179,7 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
   const sessionBusy = sessionQuery.isPending || sessionQuery.isFetching;
   const active = !sessionBusy && !sessionError && session?.data?.accessState === "active" && session.data.canReadVerification === true;
   const overviewQuery = useOverviewQuery(context, active && route.name === "overview");
+  const activityTrendQuery = useActivityTrendQuery({ ...context, range: trendRange }, active && route.name === "overview");
   const sourcesQuery = useSourcesQuery(context, active && route.name === "sources");
   const settingsQuery = useSettingsQuery(active && route.name === "settings");
   const runsQuery = useRunsQuery(filters, context.timezone, active && route.name === "runs");
@@ -168,6 +189,8 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
   const runsError = queryError(runsQuery.error);
   const detailError = queryError(detailQuery.error);
   const routePage = routeQueryState(route, active, overviewQuery, sourcesQuery, settingsQuery, detailQuery);
+  const activityTrendError = queryError(activityTrendQuery.error);
+  const overviewPageState = routePage;
   const routeError = routePage.error || (route.name === "runs" ? runsError : detailError);
   const routeAuthError = isAuthError(routeError);
   const effectiveSession = routeAuthError || sessionError ? null : session;
@@ -189,7 +212,7 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
       : runsError && !runsQuery.data
         ? { status: "error", envelope: null, error: runsError }
         : { status: "ready", envelope: lastRunsEnvelope, error: null };
-  const page = route.name === "runs" ? runsPage : routePage;
+  const page = route.name === "runs" ? runsPage : overviewPageState;
 
   useEffect(() => {
     return () => {
@@ -229,6 +252,11 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
     const values = new FormData(event.currentTarget);
     focusMainAfterRender.current = true;
     setContext({ date: String(values.get("date") || currentLocalDate()), timezone: String(values.get("timezone") || DEFAULT_TIMEZONE) });
+  }
+
+  function shiftTrend(direction: -1 | 1): void {
+    const next = shiftTrendDate(context.date, trendRange, direction, todayInTimezone(context.timezone));
+    if (next !== context.date) setContext({ ...context, date: next });
   }
 
   function onRunsSubmit(event: FormEvent<HTMLFormElement>): void {
@@ -296,7 +324,7 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
           else void detailQuery.refetch();
         });
       } else if (retryRequestKind({ session: effectiveSession || null, sessionError: effectiveSessionError } as AppState)) void sessionQuery.refetch();
-      else if (route.name === "overview") void overviewQuery.refetch();
+      else if (route.name === "overview") { void overviewQuery.refetch(); void activityTrendQuery.refetch(); }
       else if (route.name === "sources") void sourcesQuery.refetch();
       else if (route.name === "settings") void settingsQuery.refetch();
       else if (route.name === "runs") void runsQuery.refetch();
@@ -320,6 +348,13 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
     seenCursors,
     creating: createMutation.isPending
   };
+  const trendPage: PageState = !active
+    ? emptyPage()
+    : activityTrendQuery.isPending || activityTrendQuery.isFetching
+      ? { status: "loading", envelope: null, error: null }
+      : activityTrendError
+        ? { status: "error", envelope: null, error: activityTrendError }
+        : { status: "ready", envelope: activityTrendQuery.data || null, error: null };
   const state: AppState = {
     route,
     context,
@@ -329,9 +364,10 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
     retryUntil,
     retryError,
     page,
+    activityTrend: trendPage,
     runs: runsState
   };
-  const actions: ViewActions = { navigate, onRouteClick, onContextSubmit, onRunsSubmit, onAction };
+  const actions: ViewActions = { navigate, onRouteClick, onContextSubmit, onRunsSubmit, onAction, trendRange, setTrendRange, shiftTrend, trendRanges: TREND_RANGES };
 
   return <AppView state={state} actions={actions} />;
 }

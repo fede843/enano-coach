@@ -974,6 +974,81 @@ def test_unknown_query_parameters_are_rejected_by_route_allowlist() -> None:
     assert unknown.json()["error"]["code"] == "INVALID_QUERY"
 
 
+def test_activity_trend_uses_fixed_seven_day_scope_and_sanitized_aggregation() -> None:
+    client = client_for(session_mode="active")
+
+    response = client.get(
+        "/api/v1/me/verify/activity-trend",
+        params={"date": "2024-01-02", "timezone": "UTC"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert_envelope(payload)
+    assert payload["data"]["range"] == "7d"
+    assert payload["coverage"]["expectedDays"] == 7
+    assert len(payload["data"]["points"]) == 7
+    assert payload["data"]["points"][-1]["date"] == "2024-01-02"
+    assert payload["data"]["steps"]["totalObserved"] == 8123
+    assert payload["data"]["steps"]["observedDays"] == 1
+    assert "source" not in repr(payload)
+    assert "user_id" not in repr(payload)
+
+
+@pytest.mark.parametrize(
+    ("range_name", "point_count", "bucket_mode"),
+    [("monthly", 31, "daily"), ("annual", 12, "calendar-month")],
+)
+def test_activity_trend_known_date_returns_range_buckets(
+    range_name: str, point_count: int, bucket_mode: str
+) -> None:
+    client = client_for(session_mode="active")
+
+    response = client.get(
+        "/api/v1/me/verify/activity-trend",
+        params={
+            "date": "2026-08-03",
+            "timezone": "UTC",
+            "range": range_name,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload.get("error") is None
+    assert payload["data"]["range"] == range_name
+    assert payload["data"]["bucketMode"] == bucket_mode
+    assert len(payload["data"]["points"]) == point_count
+    assert payload["coverage"]["requested"]["logicalDate"] == "2026-08-03"
+
+
+def test_activity_trend_rejects_user_and_range_inputs_before_adapter_access() -> None:
+    adapter = OfflineFixtureAdapter()
+    calls: list[str] = []
+    original = adapter.get_bff_response
+
+    def counted(case: str) -> dict[str, object]:
+        calls.append(case)
+        return original(case)
+
+    adapter.get_bff_response = counted  # type: ignore[method-assign]
+    client = client_for(session_mode="active", adapter=adapter)
+
+    response = client.get(
+        "/api/v1/me/verify/activity-trend",
+        params={
+            "date": "2024-01-02",
+            "timezone": "UTC",
+            "range": "30d",
+            "user_id": "user-demo-01",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_QUERY"
+    assert calls == []
+
+
 def test_invalid_cursor_is_not_treated_as_a_first_page() -> None:
     client = client_for(session_mode="active")
 

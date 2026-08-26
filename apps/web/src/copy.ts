@@ -121,7 +121,7 @@ export const SAFE_WARNING_COPY: Record<string, string> = {
 
 export const STATE_COPY = {
   empty: { label: "Sin datos", tone: "neutral", detail: "Ventana completa sin observaciones." },
-  value: { label: "Valor", tone: "good", detail: "Observación recibida." },
+  value: { label: "Observado", tone: "good", detail: "Observación numérica válida recibida." },
   zero: { label: "Cero real", tone: "accent", detail: "Cero confirmado por el contrato." },
   null: { label: "Sin medición", tone: "neutral", detail: "El campo está presente como nulo." },
   partial: { label: "Parcial", tone: "warn", detail: "Solo una parte de la ventana está cubierta." },

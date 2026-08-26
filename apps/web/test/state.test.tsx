@@ -2,11 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/api";
-import { initialState, routeFromPath } from "../src/App";
+import { initialState, routeFromPath, shiftTrendDate, TREND_RANGES } from "../src/App";
 import { isRetryBlocked, retryGateRemaining, retryRequestKind, shouldHandleRouteClick } from "../src/controller-state";
 import { formatMetricDetail, formatMetricValue, stateLabel, warningText } from "../src/format";
 import { focusInvalidField, validationFieldId } from "../src/validation";
-import { AppView, renderErrorPanel } from "../src/view";
+import { AppView, formatTrendBucketLabel, formatTrendPointLabel, formatTrendRangeLabel, renderErrorPanel, trendAxisTickLabel, trendAxisTicks, trendBarHeight, trendGuidePosition, trendMetricMaximum, trendMetricText, trendPointText } from "../src/view";
 import type { AppState } from "../src/types";
 
 function activeState(overrides: Partial<AppState> = {}): AppState {
@@ -37,6 +37,273 @@ const actions = {
 };
 
 describe("controller and render state", () => {
+  it("uses user-facing range and localized calendar-month labels", () => {
+    expect(formatTrendRangeLabel("daily")).toBe("Diario");
+    expect(formatTrendRangeLabel("7d")).toBe("7 días");
+    expect(formatTrendRangeLabel("monthly")).toBe("Mensual");
+    expect(formatTrendRangeLabel("180d")).toBe("180 días");
+    expect(formatTrendRangeLabel("annual")).toBe("Anual");
+    expect(formatTrendBucketLabel("2024-02-01")).toMatch(/febrero|feb\.?/i);
+    expect(formatTrendBucketLabel("2024-02-01")).not.toBe("2024-02-01");
+    expect(TREND_RANGES.map((range) => range.label)).toEqual(["Diario", "7 días", "Mensual", "180 días", "Anual"]);
+  });
+
+  it("shifts each range by its exact window and blocks future dates", () => {
+    expect(shiftTrendDate("2024-01-10", "daily", 1, "2024-12-31")).toBe("2024-01-11");
+    expect(shiftTrendDate("2024-01-10", "7d", -1, "2024-12-31")).toBe("2024-01-03");
+    expect(shiftTrendDate("2024-02-29", "monthly", 1, "2024-12-31")).toBe("2024-03-01");
+    expect(shiftTrendDate("2024-01-01", "annual", 1, "2024-06-01")).toBe("2024-01-01");
+  });
+
+  it("keeps a successful overview visible when the secondary trend fails", () => {
+    const state = activeState({
+      page: {
+        status: "ready",
+        error: null,
+        envelope: {
+          schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC",
+          data: { logicalDate: "2024-01-02", summary: { steps: { state: "value", value: 10, unit: "count", isDailyTotal: true } } },
+          coverage: { expectedDays: 1, availableDays: 1, isPartial: false }, warnings: [], extensions: {}
+        }
+      }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={actions} />);
+    expect(markup).toContain("10");
+    expect(markup).not.toContain("No se pudo cargar la tendencia");
+  });
+
+  it("maps numeric trend values proportionally within each metric scale", () => {
+    expect(trendMetricText({ totalObserved: 0, averageObserved: 0, observedDays: 7, expectedDays: 7, unit: "count" }, "average")).toBe("0");
+    expect(trendPointText("partial", 1200, "pasos")).toBe("1200 pasos");
+    expect(trendPointText("source_ambiguous", null, "pasos")).toBe("Fuente ambigua");
+    expect(trendPointText("zero", 0, "pasos")).toBe("0 pasos");
+    expect(trendBarHeight("value", 1000, 4000)).toBe("25%");
+    expect(trendBarHeight("value", 2000, 4000)).toBe("50%");
+    expect(trendBarHeight("value", 4000, 4000)).toBe("100%");
+    expect(trendBarHeight("partial", 2000, 4000)).toBe("50%");
+    expect(trendBarHeight("source_ambiguous", null, 100)).toBe("0%");
+    expect(trendBarHeight("zero", 0, 4000)).toBe("0%");
+    expect(trendBarHeight("null", null, 4000)).toBe("0%");
+    expect(trendBarHeight("empty", null, 4000)).toBe("0%");
+    expect(trendBarHeight("inconclusive", null, 4000)).toBe("0%");
+  });
+
+  it("keeps steps and distance maxima independent and ignores nonnumeric points", () => {
+    const points = [
+      { steps: { state: "value", value: 1000 }, distanceMeters: { state: "value", value: 50 } },
+      { steps: { state: "value", value: 4000 }, distanceMeters: { state: "value", value: 200 } },
+      { steps: { state: "empty", value: null }, distanceMeters: { state: "null", value: null } }
+    ] as Parameters<typeof trendMetricMaximum>[0];
+    expect(trendMetricMaximum(points, "steps")).toBe(4000);
+    expect(trendMetricMaximum(points, "distanceMeters")).toBe(200);
+    expect(trendBarHeight("value", 50, trendMetricMaximum(points, "distanceMeters"))).toBe("25%");
+    expect(trendBarHeight("value", 50, 200)).toBe("25%");
+    expect(trendAxisTicks(4000)).toEqual([4000, 2000, 0]);
+    expect(trendAxisTicks(200)).toEqual([200, 100, 0]);
+    expect(trendAxisTickLabel(2000, "steps")).toBe("2000");
+    expect(trendAxisTickLabel(1000, "distanceMeters")).toBe("1 km");
+  });
+
+  it("positions observed-average guides on each metric's independent scale", () => {
+    expect(trendGuidePosition(1000, 4000)).toBe("25%");
+    expect(trendGuidePosition(50, 200)).toBe("25%");
+  });
+
+  it("omits guides for missing or nonnumeric averages but keeps zero at the baseline", () => {
+    expect(trendGuidePosition(null, 4000)).toBe(null);
+    expect(trendGuidePosition(Number.NaN, 4000)).toBe(null);
+    expect(trendGuidePosition(0, 4000)).toBe("0%");
+  });
+
+  it("renders two separate seven-position trend series", () => {
+    const points = Array.from({ length: 7 }, (_, index) => ({
+      date: `2024-01-0${index + 1}`,
+       steps: { state: index === 1 ? "partial" : "value", value: index === 1 ? 0 : index, unit: "count" },
+      distanceMeters: { state: index === 2 ? "source_ambiguous" : "value", value: index === 2 ? null : index * 2, unit: "meters" }
+    }));
+    const state = activeState({
+      page: {
+        status: "ready", error: null,
+        envelope: {
+          schemaVersion: "1", asOf: "2024-01-07T12:30:00Z", timezone: "UTC",
+          data: { logicalDate: "2024-01-07", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {}
+        }
+      },
+      activityTrend: {
+        status: "ready", error: null,
+        envelope: {
+          schemaVersion: "1", asOf: "2024-01-07T12:30:00Z", timezone: "UTC",
+          data: { logicalDate: "2024-01-07", range: "7d", steps: { unit: "count", totalObserved: 100, averageObserved: 14, observedDays: 6, expectedDays: 7 }, distanceMeters: { unit: "meters", totalObserved: 200, averageObserved: 28, observedDays: 6, expectedDays: 7 }, points }, coverage: {}, warnings: [], extensions: {}
+        }
+      }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={{ ...actions, trendRange: "7d", trendRanges: TREND_RANGES }} />);
+    expect(markup.match(/class=\"trend-bar trend-/g)?.length).toBe(14);
+    expect(markup.match(/class=\"trend-series /g)?.length).toBe(2);
+    expect(markup.match(/class=\"trend-average-guide/g)?.length).toBe(2);
+    expect(markup).toContain("Promedio observado</span>");
+    expect(markup).toContain("Promedio pasos: <strong>14</strong>");
+    expect(markup).toContain("Promedio distancia: <strong>28 m</strong>");
+    expect(markup).toContain("2 pasos");
+    expect(markup).toContain("Fuente ambigua");
+    expect(markup).toContain("2024-01-02: 0 pasos");
+    expect(markup).toContain('aria-label="Series separadas de pasos y distancia por día"');
+    expect(markup).not.toContain('grid-template-columns: repeat(2');
+    expect(markup.indexOf('trend-bar-group-label">Pasos')).toBeLessThan(markup.indexOf('trend-bar-group-label">Distancia'));
+    expect(markup).toContain('aria-label="Escala de Pasos"');
+    expect(markup).toContain('aria-label="Escala de Distancia"');
+      expect(markup).toContain('title="2024-01-02 · Pasos: 0 pasos · Estado: Parcial"');
+      expect(markup).toContain('class="trend-bar trend-partial trend-bar-numeric"');
+      expect(markup).toContain('data-tooltip="Pasos: 0 pasos · Estado: Parcial"');
+      expect(markup).not.toContain('data-tooltip="2024-01-02 ·');
+      expect(markup).toContain('aria-label="2024-01-02: 0 pasos; estado Parcial"');
+      expect(markup).toContain('title="2024-01-03 · Distancia: Fuente ambigua · Estado: Fuente ambigua"');
+     expect(markup).not.toContain('tabindex="0" title="2024-01-03 · Distancia: Fuente ambigua');
+    expect(markup).toContain('aria-label="Seleccionar ventana Diario"');
+    expect(markup).toContain('aria-label="Seleccionar ventana Anual"');
+    expect(markup).toContain('aria-label="Seleccionar ventana 7D" aria-current="true" aria-pressed="true"');
+    expect(markup).toContain('aria-label="Seleccionar ventana Diario" aria-pressed="false"');
+  });
+
+  it("renders three readable ticks for each metric scale without changing state bars", () => {
+    const points = [
+      { date: "2024-01-01", steps: { state: "zero", value: 0, unit: "count" }, distanceMeters: { state: "value", value: 100, unit: "meters" } },
+      { date: "2024-01-02", steps: { state: "null", value: null, unit: null }, distanceMeters: { state: "partial", value: 2000, unit: "meters" } },
+      { date: "2024-01-03", steps: { state: "inconclusive", value: null, unit: null }, distanceMeters: { state: "empty", value: null, unit: null } }
+    ];
+    const state = activeState({
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-03T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-03", summary: { steps: { state: "zero", value: 0, unit: "count", isDailyTotal: true } } }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      activityTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-03T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-03", range: "7d", steps: { unit: "count", totalObserved: 0, averageObserved: 0, observedDays: 1, expectedDays: 3 }, distanceMeters: { unit: "meters", totalObserved: 2100, averageObserved: 1050, observedDays: 2, expectedDays: 3 }, points }, coverage: {}, warnings: [], extensions: {} } }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={actions} />);
+    expect(markup.match(/aria-label="Escala de Pasos"/g)?.length).toBe(1);
+    expect(markup.match(/aria-label="Escala de Distancia"/g)?.length).toBe(1);
+     expect(markup).toContain(">0</span><span>0</span><span>0</span>");
+     expect(markup).toContain(">2 km</span><span>1 km</span><span>0 m</span>");
+    expect(markup).toContain('class="trend-bar trend-zero trend-bar-numeric"');
+    expect(markup).toContain('class="trend-bar trend-null"');
+    expect(markup).toContain('class="trend-bar trend-inconclusive"');
+    expect(markup).toContain('class="trend-bar trend-empty"');
+  });
+
+  it("adds compact localized day labels without putting dates in the hover tooltip", () => {
+    expect(formatTrendPointLabel("2024-01-02", "7d")).toMatch(/mar|02/i);
+    expect(formatTrendPointLabel("2024-01-02", "monthly")).toBe("02");
+    expect(formatTrendPointLabel("2024-01-02", "daily")).toMatch(/mar|02/i);
+  });
+
+  it("uses Observado for numeric trend state and renders monthly long-range buckets", () => {
+    const points = Array.from({ length: 12 }, (_, index) => ({
+      date: `2024-${String(index + 1).padStart(2, "0")}-01`,
+      steps: { state: index === 1 ? "value" : "empty", value: index === 1 ? 200 : null, unit: index === 1 ? "count" : null },
+      distanceMeters: { state: "empty", value: null, unit: null }
+    }));
+    const state = activeState({
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-12-31T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-12-31", summary: { steps: { state: "value", value: 10, unit: "count", isDailyTotal: true } } }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      activityTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-12-31T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-12-31", range: "annual", bucketMode: "calendar-month", steps: { unit: "count", totalObserved: 200, averageObserved: 200, observedDays: 1, expectedDays: 366 }, distanceMeters: { unit: "meters", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 366 }, points }, coverage: {}, warnings: [], extensions: {} } }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={{ ...actions, trendRange: "annual", trendRanges: TREND_RANGES }} />);
+    expect(markup).toContain("Resumen mensual");
+    expect(markup).toContain('aria-label="Series separadas de pasos y distancia por mes"');
+    expect(markup).toContain("Observado");
+    expect(markup).toContain("<ul class=\"trend-bucket-summary\"");
+  });
+
+  it("renders dense monthly points without visible absence labels and exposes quick controls", () => {
+    const points = Array.from({ length: 31 }, (_, index) => ({
+      date: `2024-01-${String(index + 1).padStart(2, "0")}`,
+      steps: { state: index % 3 === 0 ? "empty" : "value", value: index % 3 === 0 ? null : index * 100, unit: index % 3 === 0 ? null : "count" },
+      distanceMeters: { state: index % 4 === 0 ? "null" : "value", value: index % 4 === 0 ? null : index * 10, unit: index % 4 === 0 ? null : "meters" }
+    }));
+    const state = activeState({
+      page: {
+        status: "ready", error: null,
+        envelope: {
+          schemaVersion: "1", asOf: "2024-01-31T12:30:00Z", timezone: "UTC",
+          data: { logicalDate: "2024-01-31", summary: { steps: { state: "value", value: 10, unit: "count", isDailyTotal: true } } }, coverage: { availableDays: 1 }, warnings: [], extensions: {}
+        }
+      },
+      activityTrend: {
+        status: "ready", error: null,
+        envelope: {
+          schemaVersion: "1", asOf: "2024-01-31T12:30:00Z", timezone: "UTC",
+          data: { logicalDate: "2024-01-31", range: "monthly", bucketMode: "daily", steps: { unit: "count", totalObserved: 27900, averageObserved: 1395, observedDays: 20, expectedDays: 31 }, distanceMeters: { unit: "meters", totalObserved: 2320, averageObserved: 116, observedDays: 23, expectedDays: 31 }, points }, coverage: {}, warnings: [], extensions: {}
+        }
+      }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={{ ...actions, trendRange: "monthly", trendRanges: TREND_RANGES }} />);
+    expect(markup.match(/class="trend-bar trend-/g)?.length).toBe(62);
+    expect(markup).toContain('aria-label="Ventana anterior"');
+    expect(markup).toContain('aria-label="Seleccionar ventana Diario"');
+    expect(markup).toContain('aria-label="Seleccionar ventana 1M"');
+    expect(markup).toContain('aria-current="true"');
+    expect(markup).toContain("Promedio observado");
+    expect(markup).not.toContain(">Sin medición</span>");
+    expect(markup).not.toContain(">Ausente</span>");
+    expect(markup).toContain('aria-label="Seleccionar ventana 1M" aria-current="true" aria-pressed="true"');
+    expect(markup).toContain('aria-label="Seleccionar ventana 7D" aria-pressed="false"');
+  });
+
+  it("renders long-range buckets with localized labels and preserves the overview", () => {
+    const points = Array.from({ length: 12 }, (_, index) => ({
+      date: `2024-${String(index + 1).padStart(2, "0")}-01`,
+      steps: { state: index === 1 ? "value" : "empty", value: index === 1 ? 200 : null, unit: index === 1 ? "count" : null },
+      distanceMeters: { state: "empty", value: null, unit: null }
+    }));
+    const state = activeState({
+      page: {
+        status: "ready", error: null,
+        envelope: {
+          schemaVersion: "1", asOf: "2024-12-31T12:30:00Z", timezone: "UTC",
+          data: { logicalDate: "2024-12-31", summary: { steps: { state: "value", value: 10, unit: "count", isDailyTotal: true } } }, coverage: { availableDays: 1 }, warnings: [], extensions: {}
+        }
+      },
+      activityTrend: {
+        status: "ready", error: null,
+        envelope: {
+          schemaVersion: "1", asOf: "2024-12-31T12:30:00Z", timezone: "UTC",
+          data: { logicalDate: "2024-12-31", range: "annual", bucketMode: "calendar-month", steps: { unit: "count", totalObserved: 200, averageObserved: 200, observedDays: 1, expectedDays: 366 }, distanceMeters: { unit: "meters", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 366 }, points }, coverage: {}, warnings: [], extensions: {}
+        }
+      }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={{ ...actions, trendRange: "annual", trendRanges: TREND_RANGES }} />);
+    expect(markup).toContain("Actividad por ventana");
+    expect(markup).toContain("Anual");
+    expect(markup).toContain("febrero de 2024");
+    expect(markup).toContain("(2024-02-01)");
+    expect(markup).not.toContain("<strong>2024-02-01</strong>");
+    expect(markup).toContain("10");
+  });
+
+  it("renders explicit absence without units for missing trend aggregates", () => {
+    const state = activeState({
+      page: {
+        status: "ready", error: null,
+        envelope: {
+          schemaVersion: "1", asOf: "2024-01-07T12:30:00Z", timezone: "UTC",
+          data: { logicalDate: "2024-01-07", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {}
+        }
+      },
+      activityTrend: {
+        status: "ready", error: null,
+        envelope: {
+          schemaVersion: "1", asOf: "2024-01-07T12:30:00Z", timezone: "UTC",
+          data: {
+            logicalDate: "2024-01-07", range: "7d",
+            steps: { unit: "count", totalObserved: 0, averageObserved: null, observedDays: 1, expectedDays: 7 },
+            distanceMeters: { unit: "meters", totalObserved: null, averageObserved: 0, observedDays: 1, expectedDays: 7 },
+            points: [],
+          }, coverage: {}, warnings: [], extensions: {}
+        }
+      }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={actions} />);
+    expect(markup).toContain("Total pasos: ");
+    expect(markup).toContain("<strong>0</strong>");
+    expect(markup).toContain("Promedio pasos: <strong>Sin medición</strong>");
+    expect(markup).toContain("Total distancia: <strong>Sin medición</strong>");
+    expect(markup).toContain("Promedio distancia: <strong>0 m</strong>");
+  });
   it("maps every browser route without exposing an arbitrary route target", () => {
     expect(routeFromPath("/")).toEqual({ name: "overview", path: "/verify" });
     expect(routeFromPath("/verify/runs/verify-demo-01")).toEqual({ name: "detail", path: "/verify/runs/verify-demo-01", runKey: "verify-demo-01" });

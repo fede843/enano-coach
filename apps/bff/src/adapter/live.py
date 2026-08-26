@@ -1051,6 +1051,46 @@ class LiveOWAdapter:
         self._client._assert_owner(owner_context)
         return self._fallback.get_bff_response(case)
 
+    def get_activity_trend_response(
+        self,
+        *,
+        logical_date: str,
+        timezone_name: str,
+        start_utc: str,
+        end_utc: str,
+        range_name: str,
+        owner_context: OwnerContext,
+    ) -> dict[str, Any]:
+        from bff.service import aggregate_activity_trend
+
+        try:
+            rows = self._client.get_activity_summary(
+                owner_context=owner_context, start_date=start_utc, end_date=end_utc
+            )
+            data = aggregate_activity_trend(
+                datetime.fromisoformat(logical_date).date(),
+                [dict(row) for row in rows],
+                timezone_name=timezone_name,
+                range_name=range_name,
+            )
+            return {
+                "schemaVersion": "1",
+                "asOf": _now(),
+                "timezone": timezone_name,
+                "data": {
+                    key: value
+                    for key, value in data.items()
+                    if key not in {"coverage", "warnings"}
+                },
+                "coverage": data["coverage"],
+                "warnings": data["warnings"],
+                "extensions": {},
+            }
+        except LiveOWError as error:
+            return _error_response(error.code, timezone_name)
+        except (KeyError, TypeError, ValueError):
+            return _error_response("UPSTREAM_INVALID", timezone_name)
+
     def _source_aliases(
         self, owner_context: OwnerContext, records: Sequence[Mapping[str, Any]]
     ) -> dict[SourceIdentity, str]:
@@ -1193,7 +1233,10 @@ class LiveOWAdapter:
                     if "date" in record
                     else datetime.fromisoformat(
                         str(record["end_time"]).replace("Z", "+00:00")
-                    ).astimezone(ZoneInfo(timezone_name)).date().isoformat()
+                    )
+                    .astimezone(ZoneInfo(timezone_name))
+                    .date()
+                    .isoformat()
                 )
                 == logical_date
                 and record.get("is_nap") is False

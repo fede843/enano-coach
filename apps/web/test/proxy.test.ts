@@ -24,9 +24,11 @@ describe("development proxy boundary", () => {
     });
   });
 
-  it("restricts the development proxy to the seven fixed BFF routes", () => {
+  it("restricts the development proxy to the fixed BFF routes", () => {
     expect(isAllowlistedApiRoute("GET", "/api/v1/session")).toBe(true);
     expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/overview")).toBe(true);
+    expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/activity-trend")).toBe(true);
+    expect(isAllowlistedApiRoute("POST", "/api/v1/me/verify/activity-trend")).toBe(false);
     expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/sources")).toBe(true);
     expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/settings")).toBe(true);
     expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/runs")).toBe(true);

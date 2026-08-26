@@ -12,6 +12,7 @@ import {
   getSettings,
   parseEnvelope,
   parseOverviewEnvelope,
+  parseActivityTrendEnvelope,
   parseRunDetailEnvelope,
   parseRetryAfter,
   parseRunsEnvelope,
@@ -43,6 +44,124 @@ afterEach(() => {
 });
 
 describe("BFF client and parser", () => {
+  function trendEnvelope(overrides: Record<string, unknown> = {}): Envelope {
+    const dates = ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06", "2024-01-07"];
+    const point = (state = "value", value: number | null = 1, unit: string | null = "count") => ({ state, value, unit });
+    return envelope({
+      logicalDate: "2024-01-07",
+      range: "7d",
+      steps: { unit: "count", totalObserved: 7, averageObserved: 1, observedDays: 7, expectedDays: 7 },
+      distanceMeters: { unit: "meters", totalObserved: 14, averageObserved: 2, observedDays: 7, expectedDays: 7 },
+      points: dates.map((date) => ({ date, steps: point(), distanceMeters: point("value", 2, "meters") }))
+    }, overrides);
+  }
+
+  it("rejects a trend whose dates are not the exact ascending seven-day window", () => {
+    const invalid = trendEnvelope();
+    const data = invalid.data as Record<string, unknown>;
+    data.points = [...(data.points as unknown[]).slice(1), (data.points as unknown[])[0]];
+    expect(() => parseActivityTrendEnvelope(invalid, { date: "2024-01-07", timezone: "UTC" })).toThrow(InvalidResponse);
+  });
+
+  it("rejects trend point state, value, and unit contradictions", () => {
+    const invalid = trendEnvelope();
+    const data = invalid.data as Record<string, unknown>;
+    (data.points as Array<Record<string, unknown>>)[0].steps = { state: "zero", value: 1, unit: "count" };
+    expect(() => parseActivityTrendEnvelope(invalid)).toThrow(InvalidResponse);
+  });
+
+  it("requires the exact bucket mode for each trend range", () => {
+    for (const [range, bucketMode] of [
+      ["daily", "daily"],
+      ["7d", "daily"],
+      ["monthly", "daily"],
+      ["180d", "calendar-month"],
+      ["annual", "calendar-month"]
+    ] as const) {
+      const valid = trendEnvelope({
+        data: {
+          ...(trendEnvelope().data as Record<string, unknown>),
+          range,
+          bucketMode,
+          points: range === "7d"
+            ? (trendEnvelope().data as Record<string, unknown>).points
+            : []
+        }
+      });
+      if (range === "7d") expect(() => parseActivityTrendEnvelope(valid)).not.toThrow();
+    }
+
+    for (const range of ["daily", "7d", "monthly"] as const) {
+      const invalid = trendEnvelope({ data: { ...(trendEnvelope().data as Record<string, unknown>), range, bucketMode: "calendar-month" } });
+      expect(() => parseActivityTrendEnvelope(invalid)).toThrow(InvalidResponse);
+    }
+    for (const range of ["180d", "annual"] as const) {
+      const invalid = trendEnvelope({ data: { ...(trendEnvelope().data as Record<string, unknown>), range, bucketMode: "daily" } });
+      expect(() => parseActivityTrendEnvelope(invalid)).toThrow(InvalidResponse);
+    }
+  });
+
+  it("parses the annual calendar-month response", () => {
+    const base = trendEnvelope().data as Record<string, unknown>;
+    const points = Array.from({ length: 12 }, (_, index) => ({
+      date: `2026-${String(index + 1).padStart(2, "0")}-01`,
+      steps: { state: index === 7 ? "value" : "empty", value: index === 7 ? 800 : null, unit: index === 7 ? "count" : null },
+      distanceMeters: { state: "empty", value: null, unit: null }
+    }));
+    const parsed = parseActivityTrendEnvelope(envelope({
+      ...base,
+      logicalDate: "2026-08-03",
+      range: "annual",
+      bucketMode: "calendar-month",
+      steps: { unit: "count", totalObserved: 800, averageObserved: 800, observedDays: 1, expectedDays: 365 },
+      distanceMeters: { unit: "meters", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 365 },
+      points
+    }), { date: "2026-08-03", timezone: "UTC" });
+    expect(parsed.data?.range).toBe("annual");
+    expect(parsed.data?.points).toHaveLength(12);
+  });
+
+  it("parses 180d calendar-month points across a calendar year boundary", () => {
+    const base = trendEnvelope().data as Record<string, unknown>;
+    const points = ["2025-11-01", "2025-12-01", "2026-01-01", "2026-02-01", "2026-03-01", "2026-04-01", "2026-05-01"].map((date) => ({
+      date,
+      steps: { state: "empty", value: null, unit: null },
+      distanceMeters: { state: "empty", value: null, unit: null }
+    }));
+    const parsed = parseActivityTrendEnvelope(envelope({
+      ...base,
+      logicalDate: "2026-05-15",
+      range: "180d",
+      bucketMode: "calendar-month",
+      steps: { unit: "count", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 180 },
+      distanceMeters: { unit: "meters", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 180 },
+      points
+    }), { date: "2026-05-15", timezone: "UTC" });
+    expect(parsed.data?.points.map((point) => point.date)).toEqual(points.map((point) => point.date));
+  });
+
+  it("accepts a numeric partial trend point for compatibility", () => {
+    const valid = trendEnvelope();
+    const data = valid.data as Record<string, unknown>;
+    (data.points as Array<Record<string, unknown>>)[0].steps = {
+      state: "partial",
+      value: 0,
+      unit: "count"
+    };
+    const parsed = parseActivityTrendEnvelope(valid);
+    expect((parsed.data?.points[0].steps)).toEqual({ state: "partial", value: 0, unit: "count" });
+  });
+
+  it("rejects negative trend values and aggregates", () => {
+    const invalidPoint = trendEnvelope();
+    ((invalidPoint.data as Record<string, unknown>).points as Array<Record<string, unknown>>)[0].steps = { state: "value", value: -1, unit: "count" };
+    expect(() => parseActivityTrendEnvelope(invalidPoint)).toThrow(InvalidResponse);
+
+    const invalidAggregate = trendEnvelope();
+    ((invalidAggregate.data as Record<string, unknown>).steps as Record<string, unknown>).totalObserved = -1;
+    expect(() => parseActivityTrendEnvelope(invalidAggregate)).toThrow(InvalidResponse);
+  });
+
   it("builds only relative allowlisted paths", () => {
     expect(buildApiUrl(API_ROUTES.overview, { date: "2024-01-02", timezone: "UTC" })).toBe("/api/v1/me/verify/overview?date=2024-01-02&timezone=UTC");
     expect(() => buildApiUrl(API_ROUTES.settings, { userId: "not-allowed" })).toThrow(InvalidResponse);
