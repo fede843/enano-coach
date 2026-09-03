@@ -13,9 +13,9 @@ mode remains the default.
 - `[VERIFIED]` An explicit local development/test gate can select the server-side
   `LiveOWAdapter` for read-only overview and source requests. It requires
   `BFF_LIVE_OW_ENABLED=true`, `BFF_DEV_ACCESS_ENABLED=true`, a development/test
-  environment, server-side OW configuration, and loopback access. The browser
-  never supplies the OW URL, owner reference, user reference, bearer token, or
-  API key. `OW_BEARER_TOKEN` is preferred; the existing server-side
+  environment, server-side OW configuration, and loopback browser access. The
+  browser never supplies the OW URL, owner reference, user reference, bearer
+  token, or API key. `OW_BEARER_TOKEN` is preferred; the existing server-side
   `OW_API_KEY` fallback is used only when the bearer token is absent.
 - `[VERIFIED]` The live adapter uses only fixed GET paths, rejects redirects,
   validates upstream JSON before projection, and exposes only the existing BFF
@@ -54,6 +54,20 @@ mode remains the default.
   BFF_DEV_ACCESS_ENABLED=true BFF_ENVIRONMENT=development \
     BFF_SYNTHETIC_OWNER_KEY=owner-dev-demo
   ```
+
+- `[VERIFIED]` Cleartext OW access to a private LAN is a separate server-only
+  development opt-in. Set `BFF_LIVE_OW_ALLOW_PRIVATE_HTTP=true` only together
+  with the live and development-access gates above, then configure
+  `OW_API_BASE_URL` with a literal address in `10/8`, `172.16/12`, or
+  `192.168/16`. The flag defaults to false and is rejected outside
+  `development` or `test`. Other cleartext addresses, hostnames, URL user info,
+  paths, queries, fragments, and redirects remain rejected. Existing loopback
+  HTTP and HTTPS support is unchanged.
+- The simplest authorized local setup is a direct private-LAN OW URL. A
+  loopback SSH tunnel remains an optional fallback when direct reachability is
+  unavailable; leave the private-HTTP flag disabled for that fallback. In both
+  cases the OW URL and credentials stay in server-only local configuration,
+  and the browser continues to reach only the loopback BFF.
 
 - POST request bodies are bounded by a receive wrapper before JSON accumulation;
   the focused unit test exercises chunked ASGI receives because `TestClient`

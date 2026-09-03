@@ -54,11 +54,16 @@ browser code. Configure the BFF server with
 the fallback `OW_API_KEY`. Values stay out of this repository and out of browser
 requests.
 
-The BFF accepts only loopback browser access in this mode. OW may be reached
-directly at a loopback address or through an optional loopback tunnel to an
-authorized instance; the tunnel remains server-side. The browser still calls
-only relative `/api` paths, Vite still proxies only to the loopback BFF, and no
-OW credential, owner/user reference, or internal URL enters frontend state.
+The BFF accepts only loopback browser access in this mode. For direct
+cleartext access to an authorized private-LAN OW instance, additionally set
+`BFF_LIVE_OW_ALLOW_PRIVATE_HTTP=true` and use a literal RFC1918 IPv4 address in
+`OW_API_BASE_URL`. This is a server-only development/test exception; it does
+not allow LAN browser access, DNS names, public addresses, or arbitrary URLs.
+An optional loopback tunnel remains the fallback when direct LAN access is not
+available; leave the private-HTTP flag disabled for that fallback. The browser
+still calls only relative `/api` paths, Vite still proxies only to the loopback
+BFF, and no OW credential, owner/user reference, or internal URL enters
+frontend state.
 The local defaults remain `http://localhost:5173` for Vite and
 `http://localhost:8000` for the BFF; they are configurable development values,
 not production endpoints.

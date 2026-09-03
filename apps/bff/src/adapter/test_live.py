@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import ipaddress
 from copy import deepcopy
 from urllib.parse import urlsplit
+from urllib.request import ProxyHandler
 
 import pytest
 from fastapi.testclient import TestClient
 
-from adapter.live import LiveOWAdapter, LiveOWClient, LiveOWError
+import adapter.live as live_module
+from adapter.live import LiveOWAdapter, LiveOWClient, LiveOWError, _UrllibTransport
 from bff.main import create_app
 from bff.serializers import (
     serialize_overview,
@@ -21,6 +24,17 @@ OWNER = OwnerContext(
     ow_user_key="00000000-0000-4000-8000-000000000001",
 )
 BASE_URL = "https://ow.example.test"
+
+
+def _ipv4(value: int) -> str:
+    return str(ipaddress.IPv4Address(value))
+
+
+RFC1918_HTTP_URLS = (
+    f"http://{_ipv4(0x0A000001)}:8000",
+    f"http://{_ipv4(0xAC100001)}:8000",
+    f"http://{_ipv4(0xC0A80001)}:8000",
+)
 
 
 class FakeResponse:
@@ -395,6 +409,222 @@ def test_client_rejects_cleartext_ow_url_outside_loopback() -> None:
             expected_owner_context=OWNER,
             transport=_transport(),
         )
+
+
+@pytest.mark.parametrize("base_url", RFC1918_HTTP_URLS)
+def test_client_rejects_rfc1918_cleartext_by_default(base_url: str) -> None:
+    with pytest.raises(ValueError, match="HTTPS"):
+        LiveOWClient(
+            base_url=base_url,
+            api_key="ow-api-key-live-demo",
+            expected_owner_context=OWNER,
+            transport=_transport(),
+        )
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        0x0A000000,
+        0x0AFFFFFF,
+        0xAC100000,
+        0xAC1FFFFF,
+        0xC0A80000,
+        0xC0A8FFFF,
+    ],
+)
+def test_client_accepts_exact_rfc1918_boundaries_with_opt_in(address: int) -> None:
+    client = LiveOWClient(
+        base_url=f"http://{_ipv4(address)}:8000",
+        api_key="ow-api-key-live-demo",
+        expected_owner_context=OWNER,
+        transport=_transport(),
+        allow_private_http=True,
+    )
+
+    assert "http://" not in repr(client)
+    assert _ipv4(address) not in repr(client)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [f"http://{_ipv4(0x0A000001)}", f"http://{_ipv4(0x0A000001)}:"],
+)
+def test_client_private_http_opt_in_requires_explicit_port(base_url: str) -> None:
+    with pytest.raises(ValueError, match="OW_API_BASE_URL"):
+        LiveOWClient(
+            base_url=base_url,
+            api_key="ow-api-key-live-demo",
+            expected_owner_context=OWNER,
+            transport=_transport(),
+            allow_private_http=True,
+        )
+
+
+def test_client_private_http_opt_in_rejects_zero_port() -> None:
+    with pytest.raises(ValueError, match="OW_API_BASE_URL"):
+        LiveOWClient(
+            base_url=f"http://{_ipv4(0x0A000001)}:0",
+            api_key="ow-api-key-live-demo",
+            expected_owner_context=OWNER,
+            transport=_transport(),
+            allow_private_http=True,
+        )
+
+
+@pytest.mark.parametrize("port", [1, 65535])
+def test_client_private_http_opt_in_accepts_valid_port_boundaries(port: int) -> None:
+    LiveOWClient(
+        base_url=f"http://{_ipv4(0x0A000001)}:{port}",
+        api_key="ow-api-key-live-demo",
+        expected_owner_context=OWNER,
+        transport=_transport(),
+        allow_private_http=True,
+    )
+
+
+def test_client_private_http_opt_in_rejects_port_above_range() -> None:
+    with pytest.raises(ValueError, match="OW_API_BASE_URL"):
+        LiveOWClient(
+            base_url=f"http://{_ipv4(0x0A000001)}:65536",
+            api_key="ow-api-key-live-demo",
+            expected_owner_context=OWNER,
+            transport=_transport(),
+            allow_private_http=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        _ipv4(0x09FFFFFF),
+        _ipv4(0x0B000000),
+        _ipv4(0xAC0FFFFF),
+        _ipv4(0xAC200000),
+        _ipv4(0xC0A7FFFF),
+        _ipv4(0xC0A90000),
+        _ipv4(0x64400001),
+        _ipv4(0xA9FE0001),
+        _ipv4(0xE0000001),
+        _ipv4(0x00000000),
+        _ipv4(0xC0000201),
+        "ow.example.test",
+        f"[{ipaddress.IPv6Address(0xFD << 120)}]",
+    ],
+)
+def test_client_private_http_opt_in_rejects_non_rfc1918_hosts(host: str) -> None:
+    with pytest.raises(ValueError, match="HTTPS"):
+        LiveOWClient(
+            base_url=f"http://{host}:8000",
+            api_key="ow-api-key-live-demo",
+            expected_owner_context=OWNER,
+            transport=_transport(),
+            allow_private_http=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://localhost",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://[::1]:8000",
+    ],
+)
+def test_client_keeps_loopback_http_accepted_without_private_opt_in(
+    base_url: str,
+) -> None:
+    LiveOWClient(
+        base_url=base_url,
+        api_key="ow-api-key-live-demo",
+        expected_owner_context=OWNER,
+        transport=_transport(),
+    )
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [BASE_URL, f"https://{_ipv4(0xC0A80001)}:8443"],
+)
+def test_client_keeps_https_behavior_without_private_opt_in(base_url: str) -> None:
+    LiveOWClient(
+        base_url=base_url,
+        api_key="ow-api-key-live-demo",
+        expected_owner_context=OWNER,
+        transport=_transport(),
+    )
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://user@localhost:8000",
+        "http://localhost:8000/api",
+        "http://localhost:8000/?query=value",
+        "http://localhost:8000/#fragment",
+        "ftp://localhost:8000",
+        "http://localhost:invalid",
+        "http://localhost:70000",
+        "http://:8000",
+        "http:///",
+    ],
+)
+def test_client_rejects_malformed_or_extended_base_urls(base_url: str) -> None:
+    with pytest.raises(ValueError, match="OW_API_BASE_URL"):
+        LiveOWClient(
+            base_url=base_url,
+            api_key="ow-api-key-live-demo",
+            expected_owner_context=OWNER,
+            transport=_transport(),
+            allow_private_http=True,
+        )
+
+
+def test_urllib_transport_explicitly_bypasses_environment_proxies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handlers: list[object] = []
+
+    class FakeOpener:
+        pass
+
+    def capture_build_opener(*selected_handlers: object) -> FakeOpener:
+        handlers.extend(selected_handlers)
+        return FakeOpener()
+
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.test:8000")
+    monkeypatch.setattr(live_module, "build_opener", capture_build_opener)
+
+    _UrllibTransport()
+
+    proxy_handlers = [
+        handler for handler in handlers if isinstance(handler, ProxyHandler)
+    ]
+    assert len(proxy_handlers) == 1
+    assert proxy_handlers[0].proxies == {}
+
+
+def test_live_client_and_adapter_repr_redact_base_url() -> None:
+    base_url = RFC1918_HTTP_URLS[0]
+    client = LiveOWClient(
+        base_url=base_url,
+        api_key="ow-api-key-live-demo",
+        expected_owner_context=OWNER,
+        transport=_transport(),
+        allow_private_http=True,
+    )
+    adapter = LiveOWAdapter(
+        base_url=base_url,
+        api_key="ow-api-key-live-demo",
+        expected_owner_context=OWNER,
+        transport=_transport(),
+        allow_private_http=True,
+    )
+
+    assert base_url not in repr(client)
+    assert base_url not in repr(adapter)
+    assert "base_url" not in repr(client)
 
 
 def test_client_rejects_owner_context_mismatch_before_transport() -> None:

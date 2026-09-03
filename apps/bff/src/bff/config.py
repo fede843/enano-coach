@@ -77,6 +77,7 @@ class Settings:
     fixture_case: str | None
     dev_access_enabled: bool = False
     live_ow_enabled: bool = False
+    live_ow_allow_private_http: bool = False
     ow_api_base_url: str | None = field(default=None, repr=False)
     ow_bearer_token: str | None = field(default=None, repr=False)
     ow_api_key: str | None = field(default=None, repr=False)
@@ -97,6 +98,7 @@ class Settings:
         cursor_ttl_seconds: int | None = None,
         fixture_case: str | None = None,
         live_ow_enabled: bool | str | None = None,
+        live_ow_allow_private_http: bool | str | None = None,
         ow_api_base_url: str | None = None,
         ow_bearer_token: str | None = None,
         ow_api_key: str | None = None,
@@ -114,6 +116,22 @@ class Settings:
                 else os.getenv("BFF_DEV_ACCESS_ENABLED")
             ),
             name="BFF_DEV_ACCESS_ENABLED",
+        )
+        selected_live_ow_enabled = _boolean_setting(
+            (
+                live_ow_enabled
+                if live_ow_enabled is not None
+                else os.getenv("BFF_LIVE_OW_ENABLED")
+            ),
+            name="BFF_LIVE_OW_ENABLED",
+        )
+        selected_live_ow_allow_private_http = _boolean_setting(
+            (
+                live_ow_allow_private_http
+                if live_ow_allow_private_http is not None
+                else os.getenv("BFF_LIVE_OW_ALLOW_PRIVATE_HTTP")
+            ),
+            name="BFF_LIVE_OW_ALLOW_PRIVATE_HTTP",
         )
 
         selected_session_key = _synthetic_key(
@@ -149,6 +167,15 @@ class Settings:
             selected_environment = "test"
         else:
             selected_environment = configured_environment
+        if selected_live_ow_allow_private_http and (
+            not selected_live_ow_enabled
+            or not selected_dev_access_enabled
+            or selected_environment not in DEV_ACCESS_ENVIRONMENTS
+        ):
+            raise ValueError(
+                "BFF_LIVE_OW_ALLOW_PRIVATE_HTTP requires live OW and dev access "
+                "in development or test"
+            )
         if (
             selected_dev_access_enabled
             and selected_environment not in DEV_ACCESS_ENVIRONMENTS
@@ -169,14 +196,6 @@ class Settings:
                 "synthetic active sessions require a local development environment"
             )
 
-        selected_live_ow_enabled = _boolean_setting(
-            (
-                live_ow_enabled
-                if live_ow_enabled is not None
-                else os.getenv("BFF_LIVE_OW_ENABLED")
-            ),
-            name="BFF_LIVE_OW_ENABLED",
-        )
         configured_ow_user_key = ow_user_key or os.getenv("BFF_SYNTHETIC_OW_USER_KEY")
         configured_ow_base_url = ow_api_base_url or os.getenv("OW_API_BASE_URL")
         configured_ow_bearer_token = ow_bearer_token or os.getenv("OW_BEARER_TOKEN")
@@ -267,6 +286,7 @@ class Settings:
             ),
             dev_access_enabled=selected_dev_access_enabled,
             live_ow_enabled=selected_live_ow_enabled,
+            live_ow_allow_private_http=selected_live_ow_allow_private_http,
             ow_api_base_url=configured_ow_base_url,
             ow_bearer_token=configured_ow_bearer_token,
             ow_api_key=configured_ow_api_key,

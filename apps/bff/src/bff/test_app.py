@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 from copy import deepcopy
 from dataclasses import replace
 
@@ -276,6 +277,75 @@ def test_development_access_reads_server_settings_from_environment(
     )
 
     assert client.get("/api/v1/session").status_code == 200
+
+
+def test_private_http_flag_defaults_false_and_reads_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_arguments = {
+        "environment": "development",
+        "session_mode": "active",
+        "dev_access_enabled": True,
+        "live_ow_enabled": True,
+        "owner_key": "owner-dev-env",
+        "ow_user_key": "00000000-0000-4000-8000-000000000001",
+        "ow_api_base_url": "https://ow.example.test",
+        "ow_api_key": "ow-api-key-live-demo",
+    }
+    monkeypatch.delenv("BFF_LIVE_OW_ALLOW_PRIVATE_HTTP", raising=False)
+    disabled = Settings.from_environment(**base_arguments)
+    assert disabled.live_ow_allow_private_http is False
+
+    monkeypatch.setenv("BFF_LIVE_OW_ALLOW_PRIVATE_HTTP", "true")
+    enabled = Settings.from_environment(**base_arguments)
+    assert enabled.live_ow_allow_private_http is True
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"environment": "production"},
+        {"environment": "local"},
+        {"dev_access_enabled": False},
+        {"live_ow_enabled": False},
+    ],
+)
+def test_private_http_flag_requires_live_dev_access_in_dev_or_test(
+    overrides: dict[str, object],
+) -> None:
+    arguments: dict[str, object] = {
+        "environment": "development",
+        "session_mode": "active",
+        "dev_access_enabled": True,
+        "live_ow_enabled": True,
+        "live_ow_allow_private_http": True,
+        "owner_key": "owner-dev-env",
+        "ow_user_key": "00000000-0000-4000-8000-000000000001",
+        "ow_api_base_url": "https://ow.example.test",
+        "ow_api_key": "ow-api-key-live-demo",
+    }
+    arguments.update(overrides)
+
+    with pytest.raises(ValueError, match="BFF_LIVE_OW_ALLOW_PRIVATE_HTTP"):
+        Settings.from_environment(**arguments)
+
+
+def test_create_app_propagates_private_http_flag_to_live_adapter() -> None:
+    private_host = str(ipaddress.IPv4Address(0xC0A80001))
+    app = create_app(
+        environment="test",
+        session_mode="active",
+        dev_access_enabled=True,
+        live_ow_enabled=True,
+        live_ow_allow_private_http=True,
+        owner_key="owner-dev-env",
+        ow_user_key="00000000-0000-4000-8000-000000000001",
+        ow_api_base_url=f"http://{private_host}:8000",
+        ow_api_key="ow-api-key-live-demo",
+    )
+
+    assert app.state.service.settings.live_ow_allow_private_http is True
+    assert private_host not in repr(app.state.service.adapter)
 
 
 def test_development_access_redacts_owner_context_and_settings_repr() -> None:

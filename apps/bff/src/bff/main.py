@@ -438,6 +438,7 @@ def create_app(
     cursor_ttl_seconds: int | None = None,
     fixture_case: str | None = None,
     live_ow_enabled: bool | str | None = None,
+    live_ow_allow_private_http: bool | str | None = None,
     ow_api_base_url: str | None = None,
     ow_bearer_token: str | None = None,
     ow_api_key: str | None = None,
@@ -457,6 +458,7 @@ def create_app(
         cursor_ttl_seconds=cursor_ttl_seconds,
         fixture_case=fixture_case,
         live_ow_enabled=live_ow_enabled,
+        live_ow_allow_private_http=live_ow_allow_private_http,
         ow_api_base_url=ow_api_base_url,
         ow_bearer_token=ow_bearer_token,
         ow_api_key=ow_api_key,
@@ -482,6 +484,7 @@ def create_app(
             api_key=settings.ow_api_key,
             expected_owner_context=expected_owner_context,
             timeout_seconds=settings.ow_timeout_seconds,
+            allow_private_http=settings.live_ow_allow_private_http,
             transport=live_transport,
         )
     else:

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -36,6 +36,11 @@ _DEVICE_TYPES = frozenset(
 _MAX_RESPONSE_BYTES = 2_000_000
 _MAX_PAGES = 100
 _SOURCE_LABEL = "Fuente conectada"
+_RFC1918_IPV4_RANGES = (
+    (0x0A000000, 0x0AFFFFFF),
+    (0xAC100000, 0xAC1FFFFF),
+    (0xC0A80000, 0xC0A8FFFF),
+)
 _LIVE_ERROR_MESSAGES = {
     "UPSTREAM_INVALID": "La fuente devolvi\u00f3 una respuesta no v\u00e1lida.",
     "UPSTREAM_UNAVAILABLE": "La fuente no est\u00e1 disponible; vuelve a consultar manualmente.",
@@ -227,7 +232,7 @@ class _UrllibResponse:
 
 class _UrllibTransport:
     def __init__(self) -> None:
-        self._opener = build_opener(_NoRedirectHandler())
+        self._opener = build_opener(ProxyHandler({}), _NoRedirectHandler())
 
     def get(
         self,
@@ -257,12 +262,23 @@ class _UrllibTransport:
         return _UrllibResponse(response)
 
 
-def _base_url(value: str) -> str:
+def _is_rfc1918_ipv4(hostname: str) -> bool:
+    try:
+        address = ipaddress.IPv4Address(hostname)
+    except ipaddress.AddressValueError:
+        return False
+    numeric = int(address)
+    return any(start <= numeric <= end for start, end in _RFC1918_IPV4_RANGES)
+
+
+def _base_url(value: str, *, allow_private_http: bool = False) -> str:
     if not isinstance(value, str) or not value or any(char.isspace() for char in value):
         raise ValueError("OW_API_BASE_URL is not valid")
+    if type(allow_private_http) is not bool:
+        raise ValueError("BFF_LIVE_OW_ALLOW_PRIVATE_HTTP must be a boolean")
     try:
         parsed = urlsplit(value)
-        _ = parsed.port  # Force validation of malformed or out-of-range ports.
+        port = parsed.port  # Force validation of malformed or out-of-range ports.
     except ValueError as exc:
         raise ValueError("OW_API_BASE_URL is not valid") from exc
     if (
@@ -274,6 +290,7 @@ def _base_url(value: str) -> str:
         or parsed.fragment
         or parsed.path not in {"", "/"}
         or parsed.hostname is None
+        or port == 0
     ):
         raise ValueError("OW_API_BASE_URL is not valid")
     if parsed.scheme.lower() == "http":
@@ -282,7 +299,12 @@ def _base_url(value: str) -> str:
         except ValueError:
             is_loopback = parsed.hostname.lower() == "localhost"
         if not is_loopback:
-            raise ValueError("OW_API_BASE_URL must use HTTPS outside loopback")
+            if not (allow_private_http and _is_rfc1918_ipv4(parsed.hostname)):
+                raise ValueError("OW_API_BASE_URL must use HTTPS outside loopback")
+            if parsed.port is None:
+                raise ValueError(
+                    "OW_API_BASE_URL private HTTP requires an explicit port"
+                )
     return f"{parsed.scheme.lower()}://{parsed.netloc}"
 
 
@@ -520,10 +542,11 @@ class LiveOWClient:
         bearer_token: str | None = None,
         expected_owner_context: OwnerContext,
         timeout_seconds: float = 10.0,
+        allow_private_http: bool = False,
         transport: OWTransport | None = None,
     ) -> None:
         _owner_values(expected_owner_context)
-        self._base_url = _base_url(base_url)
+        self._base_url = _base_url(base_url, allow_private_http=allow_private_http)
         self._ow_user_key = _ow_user_uuid(expected_owner_context.ow_user_key)
         if bearer_token is not None:
             self._auth_header = (
@@ -542,9 +565,7 @@ class LiveOWClient:
         self._transport = transport or _UrllibTransport()
 
     def __repr__(self) -> str:
-        return "LiveOWClient(base_url={!r}, timeout_seconds={!r})".format(
-            self._base_url, self._timeout_seconds
-        )
+        return "LiveOWClient(timeout_seconds={!r})".format(self._timeout_seconds)
 
     def _user_path(self, suffix: str) -> str:
         return f"/api/v1/users/{quote(self._ow_user_key, safe='-._~')}/{suffix}"
@@ -1032,6 +1053,7 @@ class LiveOWAdapter:
         bearer_token: str | None = None,
         expected_owner_context: OwnerContext,
         timeout_seconds: float = 10.0,
+        allow_private_http: bool = False,
         transport: OWTransport | None = None,
         fallback: OfflineFixtureAdapter | None = None,
     ) -> None:
@@ -1041,6 +1063,7 @@ class LiveOWAdapter:
             bearer_token=bearer_token,
             expected_owner_context=expected_owner_context,
             timeout_seconds=timeout_seconds,
+            allow_private_http=allow_private_http,
             transport=transport,
         )
         self._fallback = fallback or OfflineFixtureAdapter()
