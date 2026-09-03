@@ -11,6 +11,10 @@ import type {
   MetricUnit,
   OverviewData,
   ActivityTrendData,
+  ActivityTrendMetric,
+  ActivityTrendRange,
+  SleepTrendData,
+  SleepInterval,
   ActivityTrendPointMetric,
   RunCounts,
   RunItem,
@@ -30,6 +34,7 @@ export const API_ROUTES = Object.freeze({
   session: "/api/v1/session",
   overview: "/api/v1/me/verify/overview",
   activityTrend: "/api/v1/me/verify/activity-trend",
+  sleepTrend: "/api/v1/me/verify/sleep-trend",
   sources: "/api/v1/me/verify/sources",
   settings: "/api/v1/me/verify/settings",
   runs: "/api/v1/me/verify/runs"
@@ -38,6 +43,8 @@ export const API_ROUTES = Object.freeze({
 export const API_ROUTE_PATHS = Object.freeze([
   API_ROUTES.session,
   API_ROUTES.overview,
+  API_ROUTES.activityTrend,
+  API_ROUTES.sleepTrend,
   API_ROUTES.sources,
   API_ROUTES.settings,
   API_ROUTES.runs,
@@ -49,6 +56,7 @@ const QUERY_FIELDS: Record<string, readonly string[]> = {
   [API_ROUTES.session]: [],
   [API_ROUTES.overview]: ["date", "timezone"],
   [API_ROUTES.activityTrend]: ["date", "timezone", "range"],
+  [API_ROUTES.sleepTrend]: ["date", "timezone", "range"],
   [API_ROUTES.sources]: ["date", "timezone"],
   [API_ROUTES.settings]: [],
   [API_ROUTES.runs]: ["from", "to", "state", "limit", "cursor"]
@@ -1074,6 +1082,58 @@ export async function getOverview(context: { date: string; timezone: string }, {
 export async function getActivityTrend(context: { date: string; timezone: string; range?: string }, { signal }: { signal?: AbortSignal } = {}): Promise<Envelope<ActivityTrendData>> {
   const params = contextParams(context);
   return parseActivityTrendEnvelope(await request(queryUrl(API_ROUTES.activityTrend, { ...params, range: context.range || "7d" }), { signal }), context);
+}
+
+export function parseSleepTrendEnvelope(envelope: Envelope, context?: { date: string; timezone: string } | null): Envelope<SleepTrendData> {
+  const parsed = parseDataEnvelope(envelope, (data) => {
+    onlyKeys(data, ["logicalDate", "range", "bucketMode", "nightSleepSeconds", "napsSeconds", "awakeSeconds", "lightSeconds", "deepSeconds", "remSeconds", "points", "observedDays", "averageBedtime", "averageWakeTime", "intervals"], ["logicalDate", "range", "bucketMode", "nightSleepSeconds", "napsSeconds", "points"]);
+    assert(validDate(data.logicalDate) && ["daily", "7d", "monthly", "180d", "annual"].includes(String(data.range)), "invalid sleep trend");
+    const range = data.range as ActivityTrendRange;
+    assert((range === "daily" || range === "7d" || range === "monthly") ? data.bucketMode === "daily" : data.bucketMode === "calendar-month", "invalid sleep trend buckets");
+    const year = Number(String(data.logicalDate).slice(0, 4));
+    const month = Number(String(data.logicalDate).slice(5, 7));
+    const expectedDays = range === "daily" ? 1 : range === "7d" ? 7 : range === "monthly" ? new Date(Date.UTC(year, month, 0)).getUTCDate() : range === "180d" ? 180 : new Date(Date.UTC(year, 1, 29)).getUTCDate() === 29 ? 366 : 365;
+    const parseAggregate = (value: unknown): SleepTrendData["nightSleepSeconds"] => { onlyKeys(value, ["state", "unit", "totalObserved", "averageObserved", "observedDays", "expectedDays"], ["unit", "totalObserved", "averageObserved", "observedDays", "expectedDays"]); const observedDays = value.observedDays as number; assert(value.unit === "seconds" && Number.isInteger(observedDays) && observedDays >= 0 && observedDays <= expectedDays && value.expectedDays === expectedDays, "invalid sleep aggregate"); const totalObserved = parseNumber(value.totalObserved, true); const averageObserved = parseNumber(value.averageObserved, true); assert((totalObserved === null || totalObserved >= 0) && (averageObserved === null || averageObserved >= 0), "invalid sleep aggregate values"); const state = value.state === undefined ? undefined : String(value.state); assert(state === undefined || ["value", "empty", "source_ambiguous"].includes(state), "invalid sleep aggregate state"); assert(state === "source_ambiguous" ? totalObserved === null && averageObserved === null : observedDays === 0 ? totalObserved === null && averageObserved === null : totalObserved !== null && averageObserved !== null, "invalid sleep aggregate state"); assert(state !== "empty" || observedDays === 0, "invalid sleep aggregate state"); assert(state !== "value" || observedDays > 0, "invalid sleep aggregate state"); return { ...(state === undefined ? {} : { state: state as "value" | "empty" | "source_ambiguous" }), unit: "seconds", totalObserved, averageObserved, observedDays, expectedDays }; };
+     const points = data.points as unknown[];
+    assert(Array.isArray(points) && points.length > 0, "invalid sleep trend points");
+    const parsePointMetric = (value: unknown): ActivityTrendPointMetric => { onlyKeys(value, ["state", "value", "unit"], ["state", "value", "unit"]); assert(typeof value.state === "string" && ["empty", "null", "zero", "value", "partial", "inconclusive", "source_ambiguous", "unsupported"].includes(value.state), "invalid sleep point"); const state = value.state as string; const parsed = parseNumber(value.value, true); assert(parsed === null || parsed >= 0, "invalid sleep point value"); assert(!["empty", "null", "inconclusive", "source_ambiguous", "unsupported"].includes(state) || parsed === null, "invalid sleep point value"); assert(!["value", "partial"].includes(state) || parsed !== null, "observed sleep point has no value"); assert(state !== "zero" || parsed === 0, "invalid sleep zero"); assert(["empty", "null", "inconclusive", "unsupported"].includes(state) || value.unit === "seconds", "invalid sleep point unit"); return { state: state as MetricState, value: parsed, unit: value.unit as MetricUnit }; };
+    const expectedDates = range === "daily" ? [String(data.logicalDate)] : range === "7d" ? Array.from({ length: 7 }, (_, index) => { const value = new Date(`${data.logicalDate}T00:00:00Z`); value.setUTCDate(value.getUTCDate() - (6 - index)); return value.toISOString().slice(0, 10); }) : range === "monthly" ? Array.from({ length: new Date(Date.UTC(year, month, 0)).getUTCDate() }, (_, index) => `${String(data.logicalDate).slice(0, 7)}-${String(index + 1).padStart(2, "0")}`) : (() => { const end = new Date(`${data.logicalDate}T00:00:00Z`); const start = range === "annual" ? new Date(Date.UTC(year, 0, 1)) : new Date(end.getTime() - 179 * 86400000); start.setUTCDate(1); const count = range === "annual" ? 12 : (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + end.getUTCMonth() - start.getUTCMonth() + 1; return Array.from({ length: count }, (_, index) => { const value = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + index, 1)); return value.toISOString().slice(0, 7) + "-01"; }); })();
+    assert(points.length === expectedDates.length, "invalid sleep trend point count");
+    const parsedPoints = points.map((value) => { onlyKeys(value, ["date", "nightSleepSeconds", "napsSeconds", "unclassifiedSeconds", "stages", "bedtime", "wakeTime"], ["date", "nightSleepSeconds", "napsSeconds", "stages", "bedtime", "wakeTime"]); assert(validDate(value.date), "invalid sleep point date"); onlyKeys(value.stages, ["awakeSeconds", "lightSeconds", "deepSeconds", "remSeconds"], ["awakeSeconds", "lightSeconds", "deepSeconds", "remSeconds"]); for (const timestamp of [value.bedtime, value.wakeTime]) assert(timestamp === null || validTimestamp(timestamp), "invalid sleep timestamp"); const nightSleepSeconds = parsePointMetric(value.nightSleepSeconds); const stages = { awakeSeconds: parsePointMetric(value.stages.awakeSeconds), lightSeconds: parsePointMetric(value.stages.lightSeconds), deepSeconds: parsePointMetric(value.stages.deepSeconds), remSeconds: parsePointMetric(value.stages.remSeconds) }; const unclassifiedSeconds = value.unclassifiedSeconds === undefined ? undefined : parsePointMetric(value.unclassifiedSeconds); if (nightSleepSeconds.value !== null && unclassifiedSeconds?.value !== null && unclassifiedSeconds?.value !== undefined) { const classified = [stages.lightSeconds, stages.deepSeconds, stages.remSeconds].reduce((total, metric) => total + (metric.value || 0), 0); assert(classified + unclassifiedSeconds.value === nightSleepSeconds.value, "invalid unclassified sleep remainder"); } return { date: value.date as string, nightSleepSeconds, napsSeconds: parsePointMetric(value.napsSeconds), ...(unclassifiedSeconds === undefined ? {} : { unclassifiedSeconds }), stages, bedtime: value.bedtime as string | null, wakeTime: value.wakeTime as string | null }; });
+    assert(parsedPoints.every((point, index) => point.date === expectedDates[index]), "invalid sleep trend dates");
+     assert(Number.isInteger(data.observedDays) && (data.observedDays as number) >= 0 && (data.observedDays as number) <= expectedDays && data.observedDays === (data.nightSleepSeconds as { observedDays: unknown }).observedDays, "invalid sleep observed days");
+     const parseOptionalTimestamp = (value: unknown): string | null => {
+       assert(value === null || validTimestamp(value), "invalid sleep timestamp");
+       return value as string | null;
+     };
+     const averageBedtime = data.averageBedtime === undefined ? undefined : parseOptionalTimestamp(data.averageBedtime);
+     const averageWakeTime = data.averageWakeTime === undefined ? undefined : parseOptionalTimestamp(data.averageWakeTime);
+      let intervals: SleepTrendData["intervals"] | undefined;
+      if (data.intervals !== undefined) {
+        assert(Array.isArray(data.intervals), "invalid sleep intervals");
+        assert(range === "daily" || data.intervals.length === 0, "sleep intervals are only available daily");
+        let previousEnd = -Infinity;
+       intervals = data.intervals.map((value) => {
+         onlyKeys(value, ["start", "end", "category", "isNap"], ["start", "end", "category", "isNap"]);
+         assert(validTimestamp(value.start) && validTimestamp(value.end), "invalid sleep interval timestamp");
+         const start = Date.parse(value.start);
+         const end = Date.parse(value.end);
+         assert(start < end && start >= previousEnd, "invalid sleep interval ordering");
+          assert(typeof value.category === "string" && ["sleeping", "awake", "light", "deep", "rem", "in_bed", "unknown"].includes(value.category), "invalid sleep interval category");
+         assert(typeof value.isNap === "boolean", "invalid sleep interval nap flag");
+         previousEnd = end;
+          return { start: value.start, end: value.end, category: value.category as SleepInterval["category"], isNap: value.isNap };
+       });
+     }
+     return { logicalDate: data.logicalDate as string, range, bucketMode: data.bucketMode as SleepTrendData["bucketMode"], nightSleepSeconds: parseAggregate(data.nightSleepSeconds), napsSeconds: parseAggregate(data.napsSeconds), awakeSeconds: parseAggregate(data.awakeSeconds), lightSeconds: parseAggregate(data.lightSeconds), deepSeconds: parseAggregate(data.deepSeconds), remSeconds: parseAggregate(data.remSeconds), observedDays: data.observedDays as number, points: parsedPoints, ...(averageBedtime === undefined ? {} : { averageBedtime }), ...(averageWakeTime === undefined ? {} : { averageWakeTime }), ...(intervals === undefined ? {} : { intervals }) };
+  });
+  if (context) validateResponseContext(parsed, context);
+  return parsed;
+}
+
+export async function getSleepTrend(context: { date: string; timezone: string; range?: string }, { signal }: { signal?: AbortSignal } = {}): Promise<Envelope<SleepTrendData>> {
+  const params = contextParams(context);
+  return parseSleepTrendEnvelope(await request(queryUrl(API_ROUTES.sleepTrend, { ...params, range: context.range || "7d" }), { signal }), context);
 }
 
 export async function getSources(context: { date: string; timezone: string }, { signal }: { signal?: AbortSignal } = {}): Promise<Envelope<{ items: Source[] }>> {

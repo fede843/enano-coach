@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from math import isfinite
 from typing import Any
@@ -40,13 +40,14 @@ from .models import (
     SettingsCapabilities,
     SettingsData,
     SettingsVersions,
+    SleepTrendData,
     SourceData,
     SourceItem,
     VerificationResult,
     VerificationRun,
     WarningModel,
 )
-from .ranges import trend_date_scope
+from .ranges import TREND_RANGES, trend_date_scope
 
 _TIMESTAMP_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
 _SAFE_SOURCE_LABELS = {
@@ -2105,6 +2106,228 @@ def serialize_activity_trend(
         timezone_name=timezone_name,
         requested=requested,
         replace_requested_context=True,
+    )
+
+
+@_serializer_boundary
+def serialize_sleep_trend(
+    raw: Mapping[str, Any],
+    *,
+    logical_date: str,
+    timezone_name: str,
+    from_utc: str,
+    to_utc: str,
+) -> dict[str, Any]:
+    raw_data = _mapping(raw.get("data"))
+    range_name = raw_data.get("range")
+    if raw_data.get("logicalDate") != logical_date or range_name not in TREND_RANGES:
+        raise error_for("UPSTREAM_INVALID")
+    expected_start, expected_end, expected_labels = trend_date_scope(
+        date.fromisoformat(logical_date), range_name
+    )
+    expected_dates = expected_labels
+    if range_name not in {"180d", "annual"}:
+        expected_dates = [
+            (expected_start + timedelta(days=index)).isoformat()
+            for index in range((expected_end - expected_start).days + 1)
+        ]
+    expected_bucket = "calendar-month" if range_name in {"180d", "annual"} else "daily"
+    if raw_data.get("bucketMode") != expected_bucket:
+        raise error_for("UPSTREAM_INVALID")
+    points = raw_data.get("points")
+    if (
+        not isinstance(points, Sequence)
+        or [item.get("date") for item in points if isinstance(item, Mapping)]
+        != expected_dates
+    ):
+        raise error_for("UPSTREAM_INVALID")
+    if len(points) != len(expected_dates):
+        raise error_for("UPSTREAM_INVALID")
+    stage_names = ("awakeSeconds", "lightSeconds", "deepSeconds", "remSeconds")
+    metric_names = ("nightSleepSeconds", "napsSeconds", *stage_names)
+    valid_states = {
+        "empty",
+        "inconclusive",
+        "not_verifiable",
+        "null",
+        "partial",
+        "source_ambiguous",
+        "unsupported",
+        "value",
+        "zero",
+    }
+    observed_days: dict[str, int] = {}
+    for name in metric_names:
+        aggregate = _mapping(raw_data.get(name))
+        aggregate_keys = {
+            "unit",
+            "totalObserved",
+            "averageObserved",
+            "observedDays",
+            "expectedDays",
+        }
+        if set(aggregate) not in {
+            frozenset(aggregate_keys),
+            frozenset({*aggregate_keys, "state"}),
+        }:
+            raise error_for("UPSTREAM_INVALID")
+        aggregate_state = aggregate.get("state")
+        if (
+            aggregate_state not in {None, "value", "empty", "source_ambiguous"}
+            or aggregate["unit"] != "seconds"
+            or type(aggregate["expectedDays"]) is not int
+            or aggregate["expectedDays"] < 1
+        ):
+            raise error_for("UPSTREAM_INVALID")
+        observed = _safe_int(aggregate["observedDays"])
+        total = _safe_number(aggregate["totalObserved"], optional=True)
+        average = _safe_number(aggregate["averageObserved"], optional=True)
+        if aggregate_state == "value" and (
+            observed == 0 or total is None or average is None
+        ):
+            raise error_for("UPSTREAM_INVALID")
+        if aggregate_state in {"empty", "source_ambiguous"} and (
+            total is not None or average is not None
+        ):
+            raise error_for("UPSTREAM_INVALID")
+        if aggregate_state == "empty" and observed != 0:
+            raise error_for("UPSTREAM_INVALID")
+        if total is not None and (total < 0 or average is None or average < 0):
+            raise error_for("UPSTREAM_INVALID")
+        observed_days[name] = observed
+    if (
+        type(raw_data.get("observedDays")) is not int
+        or raw_data["observedDays"] != observed_days["nightSleepSeconds"]
+    ):
+        raise error_for("UPSTREAM_INVALID")
+    expected_day_count = (expected_end - expected_start).days + 1
+    for name, observed in observed_days.items():
+        aggregate = _mapping(raw_data[name])
+        if (
+            aggregate["expectedDays"] != expected_day_count
+            or observed > expected_day_count
+        ):
+            raise error_for("UPSTREAM_INVALID")
+    coverage = _mapping(raw.get("coverage"))
+    if (
+        coverage.get("expectedDays") != expected_day_count
+        or type(coverage.get("availableDays")) is not int
+        or not 0 <= coverage["availableDays"] <= expected_day_count
+        or type(coverage.get("isPartial")) is not bool
+        or coverage["availableDays"] != observed_days["nightSleepSeconds"]
+        or coverage["isPartial"]
+        != (
+            observed_days["nightSleepSeconds"] < expected_day_count
+            and observed_days["nightSleepSeconds"] > 0
+        )
+    ):
+        raise error_for("UPSTREAM_INVALID")
+    for point in points:
+        point_raw = _mapping(point)
+        if set(point_raw) != {
+            "date",
+            "nightSleepSeconds",
+            "napsSeconds",
+            "unclassifiedSeconds",
+            "stages",
+            "bedtime",
+            "wakeTime",
+        }:
+            raise error_for("UPSTREAM_INVALID")
+        _logical_date(point_raw["date"])
+        for timestamp_name in ("bedtime", "wakeTime"):
+            _timestamp(point_raw[timestamp_name], optional=True)
+        stages = _mapping(point_raw["stages"])
+        if set(stages) != set(stage_names):
+            raise error_for("UPSTREAM_INVALID")
+        for name in (*metric_names[:2], "unclassifiedSeconds"):
+            metric = _mapping(point_raw[name])
+            if (
+                set(metric) != {"state", "value", "unit"}
+                or metric["state"] not in valid_states
+            ):
+                raise error_for("UPSTREAM_INVALID")
+            value = _safe_number(metric["value"], optional=True)
+            if value is not None and value < 0:
+                raise error_for("UPSTREAM_INVALID")
+            if metric["state"] in {"value", "zero", "partial"} and (
+                value is None or metric["unit"] != "seconds"
+            ):
+                raise error_for("UPSTREAM_INVALID")
+            if metric["state"] == "zero" and value != 0:
+                raise error_for("UPSTREAM_INVALID")
+            if (
+                metric["state"] not in {"value", "zero", "partial"}
+                and value is not None
+            ):
+                raise error_for("UPSTREAM_INVALID")
+        numeric_night = _mapping(point_raw["nightSleepSeconds"]).get("value")
+        numeric_unclassified = _mapping(point_raw["unclassifiedSeconds"]).get("value")
+        if numeric_night is not None and numeric_unclassified is not None:
+            classified = sum(
+                _mapping(stages[name]).get("value") or 0
+                for name in ("lightSeconds", "deepSeconds", "remSeconds")
+            )
+            if classified + numeric_unclassified != numeric_night:
+                raise error_for("UPSTREAM_INVALID")
+        for name in stage_names:
+            metric = _mapping(stages[name])
+            if (
+                set(metric) != {"state", "value", "unit"}
+                or metric["state"] not in valid_states
+            ):
+                raise error_for("UPSTREAM_INVALID")
+            value = _safe_number(metric["value"], optional=True)
+            if value is not None and value < 0:
+                raise error_for("UPSTREAM_INVALID")
+            if metric["state"] in {"value", "zero", "partial"} and (
+                value is None or metric["unit"] != "seconds"
+            ):
+                raise error_for("UPSTREAM_INVALID")
+            if metric["state"] == "zero" and value != 0:
+                raise error_for("UPSTREAM_INVALID")
+            if (
+                metric["state"] not in {"value", "zero", "partial"}
+                and value is not None
+            ):
+                raise error_for("UPSTREAM_INVALID")
+    for timestamp_name in ("averageBedtime", "averageWakeTime"):
+        _timestamp(raw_data.get(timestamp_name), optional=True)
+    intervals = raw_data.get("intervals", [])
+    if not isinstance(intervals, list):
+        raise error_for("UPSTREAM_INVALID")
+    previous_end: datetime | None = None
+    for interval in intervals:
+        item = _mapping(interval)
+        if set(item) != {"start", "end", "category", "isNap"}:
+            raise error_for("UPSTREAM_INVALID")
+        start = _timestamp(item["start"])
+        end = _timestamp(item["end"])
+        if (
+            item["category"]
+            not in {"sleeping", "awake", "light", "deep", "rem", "in_bed", "unknown"}
+            or type(item["isNap"]) is not bool
+        ):
+            raise error_for("UPSTREAM_INVALID")
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        if end_dt <= start_dt or (previous_end is not None and start_dt < previous_end):
+            raise error_for("UPSTREAM_INVALID")
+        previous_end = end_dt
+    try:
+        data = _model(SleepTrendData, raw_data)
+    except Exception as exc:
+        raise error_for("UPSTREAM_INVALID") from exc
+    return _envelope(
+        data,
+        raw=raw,
+        timezone_name=timezone_name,
+        requested={
+            "logicalDate": logical_date,
+            "from": from_utc,
+            "to": to_utc,
+            "timezone": timezone_name,
+        },
     )
 
 

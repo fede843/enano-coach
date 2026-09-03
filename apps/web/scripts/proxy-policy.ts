@@ -27,6 +27,7 @@ const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 
 const RUNS_PATH = "/api/v1/me/verify/runs";
 const ACTIVITY_TREND_PATH = "/api/v1/me/verify/activity-trend";
+const SLEEP_TREND_PATH = "/api/v1/me/verify/sleep-trend";
 const RUN_DETAIL_PATH = /^\/api\/v1\/me\/verify\/runs\/verify-demo-[a-z0-9-]+$/;
 
 function filterHeaders(
@@ -95,6 +96,7 @@ export function isAllowlistedApiRoute(method: string, pathname: string): boolean
     "/api/v1/session",
     "/api/v1/me/verify/overview",
     ACTIVITY_TREND_PATH,
+    SLEEP_TREND_PATH,
     "/api/v1/me/verify/sources",
     "/api/v1/me/verify/settings",
     RUNS_PATH

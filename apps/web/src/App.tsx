@@ -10,6 +10,7 @@ import {
   useCreateRunMutation,
   useOverviewQuery,
   useActivityTrendQuery,
+  useSleepTrendQuery,
   useRunDetailQuery,
   useRunsQuery,
   useSessionQuery,
@@ -17,7 +18,7 @@ import {
   useSourcesQuery
 } from "./queries";
 import { focusInvalidField } from "./validation";
-import { AppView, type ViewAction, type ViewActions } from "./view";
+import { AppView, type SleepDisplayMode, type ViewAction, type ViewActions } from "./view";
 import type {
   AppRoute,
   AppState,
@@ -35,7 +36,7 @@ function currentLocalDate(): string {
   return `${year}-${month}-${day}`;
 }
 
-const DEFAULT_TIMEZONE = "UTC";
+export const DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires";
 
 type Context = { date: string; timezone: string };
 export const TREND_RANGES: Array<{ value: ActivityTrendRange; label: string }> = [
@@ -53,6 +54,10 @@ export function shiftTrendDate(dateValue: string, range: ActivityTrendRange, dir
   else current.setUTCFullYear(current.getUTCFullYear() + direction);
   const next = current.toISOString().slice(0, 10);
   return next > today ? dateValue : next;
+}
+
+export function shiftSleepSelection(dateValue: string, range: ActivityTrendRange, direction: -1 | 1, today: string): string {
+  return shiftTrendDate(dateValue, range, direction, today);
 }
 type RunFilters = { from: string; to: string; state: string };
 
@@ -129,6 +134,16 @@ function queryError(error: unknown): ApiError | null {
   return error === null || error === undefined ? null : asApiError(error);
 }
 
+export function refetchOverviewQueries(queries: {
+  overview: () => Promise<unknown>;
+  activity: () => Promise<unknown>;
+  sleep: () => Promise<unknown>;
+}): void {
+  void queries.overview();
+  void queries.activity();
+  void queries.sleep();
+}
+
 function isAuthError(error: ApiError | null): boolean {
   return error !== null && ([401, 403].includes(error.status) || ["SESSION_REQUIRED", "SESSION_EXPIRED", "ACCESS_PENDING", "ACCESS_BLOCKED", "FORBIDDEN"].includes(error.code));
 }
@@ -136,7 +151,7 @@ function isAuthError(error: ApiError | null): boolean {
 function pageFromQuery<T>(query: { data?: Envelope<T>; error?: unknown; isPending: boolean; isFetching: boolean }, enabled: boolean): PageState {
   if (!enabled) return emptyPage();
   const error = queryError(query.error);
-  if (query.isPending || query.isFetching) return { status: "loading", envelope: null, error: null };
+  if (query.isPending || (query.isFetching && query.data === undefined)) return { status: "loading", envelope: null, error: null };
   if (error) return { status: "error", envelope: null, error };
   return { status: "ready", envelope: query.data || null, error: null };
 }
@@ -168,6 +183,9 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
     : routeFromLocation;
   const [filters, setFilters] = useState<RunFilters>({ from: "", to: "", state: "" });
   const [trendRange, setTrendRange] = useState<ActivityTrendRange>("7d");
+  const [sleepRange, setSleepRange] = useState<ActivityTrendRange>("7d");
+  const [sleepDate, setSleepDate] = useState(() => context.date);
+  const [sleepMode, setSleepMode] = useState<SleepDisplayMode>("schedule");
   const [createKey, setCreateKey] = useState<IdempotencyKey | null>(null);
   const [createLocalError, setCreateLocalError] = useState<ApiError | null>(null);
   const focusMainAfterRender = useRef(false);
@@ -180,6 +198,7 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
   const active = !sessionBusy && !sessionError && session?.data?.accessState === "active" && session.data.canReadVerification === true;
   const overviewQuery = useOverviewQuery(context, active && route.name === "overview");
   const activityTrendQuery = useActivityTrendQuery({ ...context, range: trendRange }, active && route.name === "overview");
+  const sleepTrendQuery = useSleepTrendQuery({ date: sleepDate, timezone: context.timezone, range: sleepRange }, active && route.name === "overview");
   const sourcesQuery = useSourcesQuery(context, active && route.name === "sources");
   const settingsQuery = useSettingsQuery(active && route.name === "settings");
   const runsQuery = useRunsQuery(filters, context.timezone, active && route.name === "runs");
@@ -190,6 +209,7 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
   const detailError = queryError(detailQuery.error);
   const routePage = routeQueryState(route, active, overviewQuery, sourcesQuery, settingsQuery, detailQuery);
   const activityTrendError = queryError(activityTrendQuery.error);
+  const sleepTrendError = queryError(sleepTrendQuery.error);
   const overviewPageState = routePage;
   const routeError = routePage.error || (route.name === "runs" ? runsError : detailError);
   const routeAuthError = isAuthError(routeError);
@@ -251,12 +271,22 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
     if (isRetryBlocked(retryUntil)) return;
     const values = new FormData(event.currentTarget);
     focusMainAfterRender.current = true;
-    setContext({ date: String(values.get("date") || currentLocalDate()), timezone: String(values.get("timezone") || DEFAULT_TIMEZONE) });
+    const nextContext = { date: String(values.get("date") || currentLocalDate()), timezone: String(values.get("timezone") || DEFAULT_TIMEZONE) };
+    setContext(nextContext);
+    setSleepDate(nextContext.date);
   }
 
   function shiftTrend(direction: -1 | 1): void {
     const next = shiftTrendDate(context.date, trendRange, direction, todayInTimezone(context.timezone));
     if (next !== context.date) setContext({ ...context, date: next });
+  }
+
+  function setTrendDate(date: string): void {
+    if (date) setContext({ ...context, date });
+  }
+
+  function shiftSleep(direction: -1 | 1): void {
+    setSleepDate((selectedDate) => shiftSleepSelection(selectedDate, sleepRange, direction, todayInTimezone(context.timezone)));
   }
 
   function onRunsSubmit(event: FormEvent<HTMLFormElement>): void {
@@ -324,7 +354,7 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
           else void detailQuery.refetch();
         });
       } else if (retryRequestKind({ session: effectiveSession || null, sessionError: effectiveSessionError } as AppState)) void sessionQuery.refetch();
-      else if (route.name === "overview") { void overviewQuery.refetch(); void activityTrendQuery.refetch(); }
+      else if (route.name === "overview") { void overviewQuery.refetch(); void activityTrendQuery.refetch(); void sleepTrendQuery.refetch(); }
       else if (route.name === "sources") void sourcesQuery.refetch();
       else if (route.name === "settings") void settingsQuery.refetch();
       else if (route.name === "runs") void runsQuery.refetch();
@@ -355,6 +385,7 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
       : activityTrendError
         ? { status: "error", envelope: null, error: activityTrendError }
         : { status: "ready", envelope: activityTrendQuery.data || null, error: null };
+  const sleepTrendPage: PageState = !active ? emptyPage() : sleepTrendQuery.isPending || (sleepTrendQuery.isFetching && sleepTrendQuery.data === undefined) ? { status: "loading", envelope: null, error: null } : sleepTrendError ? { status: "error", envelope: null, error: sleepTrendError } : { status: "ready", envelope: sleepTrendQuery.data || null, error: null };
   const state: AppState = {
     route,
     context,
@@ -365,9 +396,10 @@ function RouterScreen({ context, setContext }: { context: Context; setContext: (
     retryError,
     page,
     activityTrend: trendPage,
+    sleepTrend: sleepTrendPage,
     runs: runsState
   };
-  const actions: ViewActions = { navigate, onRouteClick, onContextSubmit, onRunsSubmit, onAction, trendRange, setTrendRange, shiftTrend, trendRanges: TREND_RANGES };
+  const actions: ViewActions = { navigate, onRouteClick, onContextSubmit, onRunsSubmit, onAction, trendRange, setTrendRange, setTrendDate, shiftTrend, trendRanges: TREND_RANGES, sleepRange, setSleepRange, shiftSleep, sleepDate, setSleepDate, sleepMode, setSleepMode };
 
   return <AppView state={state} actions={actions} />;
 }

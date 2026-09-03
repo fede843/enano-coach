@@ -119,6 +119,7 @@ _SLEEP_SUMMARY_FIELDS = frozenset(
         "start_time",
         "end_time",
         "duration_minutes",
+        "sleep_duration_seconds",
         "total_duration_minutes",
         "time_in_bed_minutes",
         "efficiency_percent",
@@ -385,6 +386,8 @@ def _timestamp(value: object, *, optional: bool = False) -> str | None:
     if value is None and optional:
         return None
     if not isinstance(value, str):
+        raise LiveOWError("UPSTREAM_INVALID")
+    if not value.endswith("Z"):
         raise LiveOWError("UPSTREAM_INVALID")
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -860,6 +863,7 @@ def _validate_sleep_summary(value: object) -> Mapping[str, Any]:
             _timestamp(raw[key], optional=True)
     for key in (
         "duration_minutes",
+        "sleep_duration_seconds",
         "total_duration_minutes",
         "time_in_bed_minutes",
         "efficiency_percent",
@@ -1070,6 +1074,50 @@ class LiveOWAdapter:
             data = aggregate_activity_trend(
                 datetime.fromisoformat(logical_date).date(),
                 [dict(row) for row in rows],
+                timezone_name=timezone_name,
+                range_name=range_name,
+            )
+            return {
+                "schemaVersion": "1",
+                "asOf": _now(),
+                "timezone": timezone_name,
+                "data": {
+                    key: value
+                    for key, value in data.items()
+                    if key not in {"coverage", "warnings"}
+                },
+                "coverage": data["coverage"],
+                "warnings": data["warnings"],
+                "extensions": {},
+            }
+        except LiveOWError as error:
+            return _error_response(error.code, timezone_name)
+        except (KeyError, TypeError, ValueError):
+            return _error_response("UPSTREAM_INVALID", timezone_name)
+
+    def get_sleep_trend_response(
+        self,
+        *,
+        logical_date: str,
+        timezone_name: str,
+        start_utc: str,
+        end_utc: str,
+        range_name: str,
+        owner_context: OwnerContext,
+    ) -> dict[str, Any]:
+        from bff.service import aggregate_sleep_trend
+
+        try:
+            summaries = self._client.get_sleep_summary(
+                owner_context=owner_context, start_date=start_utc, end_date=end_utc
+            )
+            events = self._client.get_sleep_events(
+                owner_context=owner_context, start_date=start_utc, end_date=end_utc
+            )
+            data = aggregate_sleep_trend(
+                datetime.fromisoformat(logical_date).date(),
+                [dict(row) for row in summaries],
+                [dict(row) for row in events],
                 timezone_name=timezone_name,
                 range_name=range_name,
             )

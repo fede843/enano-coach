@@ -13,12 +13,14 @@ import {
   parseEnvelope,
   parseOverviewEnvelope,
   parseActivityTrendEnvelope,
+  parseSleepTrendEnvelope,
   parseRunDetailEnvelope,
   parseRetryAfter,
   parseRunsEnvelope,
   parseSession,
   parseSettingsEnvelope
 } from "../src/api";
+import ambiguousSleepFixture from "../../../docs/fixtures/sleep-trend-source-ambiguous-v1.json";
 import type { Envelope } from "../src/types";
 
 function envelope(data: unknown, overrides: Record<string, unknown> = {}): Envelope {
@@ -167,6 +169,182 @@ describe("BFF client and parser", () => {
     expect(() => buildApiUrl(API_ROUTES.settings, { userId: "not-allowed" })).toThrow(InvalidResponse);
     expect(() => buildApiUrl(API_ROUTES.runs, { timezone: "UTC" })).toThrow(InvalidResponse);
     expect(() => buildApiUrl("https://provider.example.test/data", {})).toThrow(InvalidResponse);
+  });
+
+  it("rejects sleep points with state/value contradictions", () => {
+    const invalid = envelope({
+      logicalDate: "2024-01-02", range: "daily", bucketMode: "daily",
+      nightSleepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, observedDays: 0,
+      points: [{ date: "2024-01-02", nightSleepSeconds: { state: "unsupported", value: 1, unit: "seconds" }, napsSeconds: { state: "empty", value: null, unit: null }, stages: { awakeSeconds: { state: "unsupported", value: null, unit: null }, lightSeconds: { state: "unsupported", value: null, unit: null }, deepSeconds: { state: "unsupported", value: null, unit: null }, remSeconds: { state: "unsupported", value: null, unit: null } }, bedtime: null, wakeTime: null }]
+    });
+    expect(() => parseSleepTrendEnvelope(invalid)).toThrow(InvalidResponse);
+  });
+
+  it("rejects offset-bearing and timezone-less sleep timestamps", () => {
+    const base = {
+      logicalDate: "2024-01-02", range: "daily", bucketMode: "daily",
+      nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 },
+      napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      observedDays: 1,
+      points: [{ date: "2024-01-02", nightSleepSeconds: { state: "value", value: 25200, unit: "seconds" }, napsSeconds: { state: "empty", value: null, unit: null }, stages: { awakeSeconds: { state: "unsupported", value: null, unit: null }, lightSeconds: { state: "unsupported", value: null, unit: null }, deepSeconds: { state: "unsupported", value: null, unit: null }, remSeconds: { state: "unsupported", value: null, unit: null } }, bedtime: "2024-01-01T22:30:00Z", wakeTime: "2024-01-02T06:30:00Z" }]
+    };
+    for (const timestamp of ["2024-01-01T22:30:00+01:00", "2024-01-01T22:30:00"]) {
+      const invalid = structuredClone(base) as Record<string, unknown>;
+      ((invalid.points as Array<Record<string, unknown>>)[0]).bedtime = timestamp;
+      expect(() => parseSleepTrendEnvelope(envelope(invalid))).toThrow(InvalidResponse);
+    }
+  });
+
+  it("preserves validated sleep averages and generic daily intervals", () => {
+    const base = {
+      logicalDate: "2024-01-02", range: "daily", bucketMode: "daily",
+      nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 },
+      napsSeconds: { unit: "seconds", totalObserved: 1800, averageObserved: 1800, observedDays: 1, expectedDays: 1 },
+      awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      observedDays: 1,
+      points: [{ date: "2024-01-02", nightSleepSeconds: { state: "value", value: 25200, unit: "seconds" }, napsSeconds: { state: "value", value: 1800, unit: "seconds" }, unclassifiedSeconds: { state: "value", value: 25200, unit: "seconds" }, stages: { awakeSeconds: { state: "unsupported", value: null, unit: null }, lightSeconds: { state: "unsupported", value: null, unit: null }, deepSeconds: { state: "unsupported", value: null, unit: null }, remSeconds: { state: "unsupported", value: null, unit: null } }, bedtime: "2024-01-01T22:30:00Z", wakeTime: "2024-01-02T06:30:00Z" }],
+      averageBedtime: "2024-01-01T22:30:00Z",
+      averageWakeTime: null,
+      intervals: [
+        { start: "2024-01-02T06:00:00Z", end: "2024-01-02T06:05:00Z", category: "light", isNap: false },
+        { start: "2024-01-02T06:05:00Z", end: "2024-01-02T06:10:00Z", category: "deep", isNap: false },
+        { start: "2024-01-02T06:10:00Z", end: "2024-01-02T06:20:00Z", category: "awake", isNap: false },
+        { start: "2024-01-02T13:00:00Z", end: "2024-01-02T13:15:00Z", category: "unknown", isNap: true }
+      ]
+    };
+
+    const parsed = parseSleepTrendEnvelope(envelope(base));
+    expect(parsed.data?.averageBedtime).toBe("2024-01-01T22:30:00Z");
+    expect(parsed.data?.averageWakeTime).toBe(null);
+    expect(parsed.data?.points[0].unclassifiedSeconds?.value).toBe(25200);
+    expect(parsed.data?.intervals).toEqual(base.intervals);
+
+    const contradictory = structuredClone(base);
+    contradictory.points[0].unclassifiedSeconds.value = 1;
+    expect(() => parseSleepTrendEnvelope(envelope(contradictory))).toThrow(InvalidResponse);
+  });
+
+  it("rejects unknown sleep interval categories and overlapping intervals", () => {
+    const base = {
+      logicalDate: "2024-01-02", range: "daily", bucketMode: "daily",
+      nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 },
+      napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      observedDays: 1,
+      points: [{ date: "2024-01-02", nightSleepSeconds: { state: "value", value: 25200, unit: "seconds" }, napsSeconds: { state: "empty", value: null, unit: null }, stages: { awakeSeconds: { state: "unsupported", value: null, unit: null }, lightSeconds: { state: "unsupported", value: null, unit: null }, deepSeconds: { state: "unsupported", value: null, unit: null }, remSeconds: { state: "unsupported", value: null, unit: null } }, bedtime: null, wakeTime: null }]
+    };
+    const overlapping = envelope({ ...base, intervals: [
+      { start: "2024-01-02T06:00:00Z", end: "2024-01-02T06:10:00Z", category: "sleeping", isNap: false },
+      { start: "2024-01-02T06:05:00Z", end: "2024-01-02T06:08:00Z", category: "deep", isNap: false }
+    ] });
+    expect(() => parseSleepTrendEnvelope(overlapping)).toThrow();
+    const unknown = envelope({ ...base, intervals: [
+      { start: "2024-01-02T06:00:00Z", end: "2024-01-02T06:10:00Z", category: "raw-stage", isNap: false }
+    ] });
+    expect(() => parseSleepTrendEnvelope(unknown)).toThrow();
+  });
+
+  it("accepts the empty intervals field on non-daily sleep ranges", () => {
+    const valid = envelope({
+      logicalDate: "2024-01-02", range: "7d", bucketMode: "daily",
+      nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 7 },
+      napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 7 },
+      awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 7 },
+      lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 7 },
+      deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 7 },
+      remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 7 },
+      observedDays: 1,
+      points: Array.from({ length: 7 }, (_, index) => ({
+        date: new Date(Date.UTC(2024, 0, -4 + index)).toISOString().slice(0, 10),
+        nightSleepSeconds: { state: index === 6 ? "value" : "empty", value: index === 6 ? 25200 : null, unit: index === 6 ? "seconds" : null },
+        napsSeconds: { state: "empty", value: null, unit: null },
+        stages: { awakeSeconds: { state: "unsupported", value: null, unit: null }, lightSeconds: { state: "unsupported", value: null, unit: null }, deepSeconds: { state: "unsupported", value: null, unit: null }, remSeconds: { state: "unsupported", value: null, unit: null } },
+        bedtime: null,
+        wakeTime: null
+      })),
+      intervals: []
+    });
+    expect(parseSleepTrendEnvelope(valid).data?.intervals).toEqual([]);
+  });
+
+  it("rejects invalid sleep averages, intervals, ordering, and inferred stage categories", () => {
+    const base = {
+      logicalDate: "2024-01-02", range: "daily", bucketMode: "daily",
+      nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 },
+      napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, observedDays: 1,
+      points: [{ date: "2024-01-02", nightSleepSeconds: { state: "value", value: 25200, unit: "seconds" }, napsSeconds: { state: "empty", value: null, unit: null }, stages: { awakeSeconds: { state: "unsupported", value: null, unit: null }, lightSeconds: { state: "unsupported", value: null, unit: null }, deepSeconds: { state: "unsupported", value: null, unit: null }, remSeconds: { state: "unsupported", value: null, unit: null } }, bedtime: null, wakeTime: null }],
+      averageBedtime: null, averageWakeTime: null,
+      intervals: [{ start: "2024-01-02T06:10:00Z", end: "2024-01-02T06:00:00Z", category: "sleeping", isNap: false }]
+    };
+    for (const change of [
+      { averageBedtime: "2024-01-02T22:30:00+01:00" },
+      { averageWakeTime: "2024-01-02T06:30:00" },
+      { intervals: [{ ...base.intervals[0], category: "raw-stage" }] },
+      { intervals: [{ ...base.intervals[0], isNap: "false" }] },
+      { intervals: [{ start: "2024-01-02T06:10:00Z", end: "2024-01-02T06:20:00Z", category: "awake", isNap: false }, { start: "2024-01-02T06:00:00Z", end: "2024-01-02T06:10:00Z", category: "sleeping", isNap: false }] }
+    ]) {
+      expect(() => parseSleepTrendEnvelope(envelope({ ...base, ...change }))).toThrow(InvalidResponse);
+    }
+  });
+
+  it("fetches and validates successful sleep trend responses for each bucket mode", async () => {
+    const response = envelope({
+      logicalDate: "2024-02-29", range: "monthly", bucketMode: "daily",
+      nightSleepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 29 },
+      napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 29 },
+      awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 29 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 29 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 29 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 29 }, observedDays: 0,
+      points: Array.from({ length: 29 }, (_, index) => ({ date: `2024-02-${String(index + 1).padStart(2, "0")}`, nightSleepSeconds: { state: "empty", value: null, unit: null }, napsSeconds: { state: "empty", value: null, unit: null }, stages: { awakeSeconds: { state: "unsupported", value: null, unit: null }, lightSeconds: { state: "unsupported", value: null, unit: null }, deepSeconds: { state: "unsupported", value: null, unit: null }, remSeconds: { state: "unsupported", value: null, unit: null } }, bedtime: null, wakeTime: null }))
+    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(response), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const result = await (await import("../src/api")).getSleepTrend({ date: "2024-02-29", timezone: "UTC", range: "monthly" });
+    expect(result.data?.points).toHaveLength(29);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("range=monthly");
+  });
+
+  it("preserves the BFF sleep aggregate state", () => {
+    const valid = envelope({
+      logicalDate: "2024-01-02", range: "daily", bucketMode: "daily",
+      nightSleepSeconds: { state: "value", unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 },
+      napsSeconds: { state: "empty", unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 },
+      awakeSeconds: { state: "value", unit: "seconds", totalObserved: 600, averageObserved: 600, observedDays: 1, expectedDays: 1 },
+      lightSeconds: { state: "value", unit: "seconds", totalObserved: 12600, averageObserved: 12600, observedDays: 1, expectedDays: 1 },
+      deepSeconds: { state: "value", unit: "seconds", totalObserved: 6000, averageObserved: 6000, observedDays: 1, expectedDays: 1 },
+      remSeconds: { state: "value", unit: "seconds", totalObserved: 6600, averageObserved: 6600, observedDays: 1, expectedDays: 1 },
+      observedDays: 1,
+      points: [{ date: "2024-01-02", nightSleepSeconds: { state: "value", value: 25200, unit: "seconds" }, napsSeconds: { state: "empty", value: null, unit: null }, stages: { awakeSeconds: { state: "value", value: 600, unit: "seconds" }, lightSeconds: { state: "value", value: 12600, unit: "seconds" }, deepSeconds: { state: "value", value: 6000, unit: "seconds" }, remSeconds: { state: "value", value: 6600, unit: "seconds" } }, bedtime: "2024-01-01T22:30:00Z", wakeTime: "2024-01-02T06:30:00Z" }]
+    });
+
+    expect(parseSleepTrendEnvelope(valid).data?.nightSleepSeconds.state).toBe("value");
+  });
+
+  it("accepts the serialized BFF source-ambiguous sleep contract without inventing values", () => {
+    const parsed = parseSleepTrendEnvelope(envelope(ambiguousSleepFixture.data));
+
+    expect(parsed.data?.nightSleepSeconds).toMatchObject({
+      state: "source_ambiguous",
+      totalObserved: null,
+      averageObserved: null,
+      observedDays: 2
+    });
+    expect(parsed.data?.napsSeconds).toMatchObject({
+      state: "source_ambiguous",
+      totalObserved: null,
+      averageObserved: null,
+      observedDays: 0
+    });
   });
 
   it("rejects unknown top-level response fields and browser identity fields", () => {

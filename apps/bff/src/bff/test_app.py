@@ -88,6 +88,29 @@ def test_anonymous_session_is_public_but_protected_routes_do_not_query_adapter()
     assert calls == []
 
 
+def test_context_defaults_to_argentina_and_preserves_explicit_timezone() -> None:
+    client = client_for()
+    default_response = client.get(
+        "/api/v1/me/verify/sleep-trend", params={"date": "2024-01-02"}
+    )
+    explicit_response = client.get(
+        "/api/v1/me/verify/sleep-trend",
+        params={"date": "2024-01-02", "timezone": "America/New_York"},
+    )
+    assert default_response.status_code == 200
+    assert explicit_response.status_code == 200
+    assert default_response.json()["timezone"] == "America/Argentina/Buenos_Aires"
+    assert explicit_response.json()["timezone"] == "America/New_York"
+    assert (
+        default_response.json()["coverage"]["requested"]["timezone"]
+        == "America/Argentina/Buenos_Aires"
+    )
+    assert (
+        explicit_response.json()["coverage"]["requested"]["timezone"]
+        == "America/New_York"
+    )
+
+
 @pytest.mark.parametrize(
     ("mode", "status", "code"),
     [
@@ -995,6 +1018,84 @@ def test_activity_trend_uses_fixed_seven_day_scope_and_sanitized_aggregation() -
     assert "user_id" not in repr(payload)
 
 
+@pytest.mark.parametrize("range_name", ["monthly", "180d", "annual"])
+def test_sleep_trend_route_returns_successful_conservative_bucket_response(
+    range_name: str,
+) -> None:
+    client = client_for(session_mode="active")
+
+    response = client.get(
+        "/api/v1/me/verify/sleep-trend",
+        params={"date": "2024-02-29", "timezone": "Europe/Madrid", "range": range_name},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert_envelope(payload)
+    assert payload["data"]["range"] == range_name
+    assert payload["data"]["bucketMode"] == (
+        "calendar-month" if range_name in {"180d", "annual"} else "daily"
+    )
+    assert all(
+        stage["state"] in {"unsupported", "value", "zero"}
+        for point in payload["data"]["points"]
+        for stage in point["stages"].values()
+    )
+
+
+@pytest.mark.parametrize(
+    ("params", "field"),
+    [
+        ({"date": "2024-02-30", "timezone": "UTC"}, "date"),
+        ({"date": "2024-02-29", "timezone": "Not/AZone"}, "timezone"),
+        ({"date": "2024-02-29", "timezone": "UTC", "range": "30d"}, None),
+        (
+            {
+                "date": "2024-02-29",
+                "timezone": "UTC",
+                "range": "annual",
+                "timestamp": "2024-02-29T00:00:00+00:00",
+            },
+            None,
+        ),
+    ],
+)
+def test_sleep_trend_route_rejects_invalid_range_timestamp_and_timezone_query(
+    params: dict[str, str], field: str | None
+) -> None:
+    client = client_for(session_mode="active")
+
+    response = client.get("/api/v1/me/verify/sleep-trend", params=params)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_QUERY"
+    assert response.json()["error"]["field"] == field
+
+
+def test_sleep_trend_route_rejects_unknown_query_fields_without_adapter_access() -> (
+    None
+):
+    adapter = OfflineFixtureAdapter()
+    calls: list[str] = []
+    original = adapter.get_bff_response
+
+    def counted(case: str) -> dict[str, object]:
+        calls.append(case)
+        return original(case)
+
+    adapter.get_bff_response = counted  # type: ignore[method-assign]
+    client = client_for(session_mode="active", adapter=adapter)
+
+    response = client.get(
+        "/api/v1/me/verify/sleep-trend",
+        params={"date": "2024-02-29", "timezone": "UTC", "unexpected": "value"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_QUERY"
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     ("range_name", "point_count", "bucket_mode"),
     [("monthly", 31, "daily"), ("annual", 12, "calendar-month")],
@@ -1113,6 +1214,8 @@ def test_all_declared_routes_are_available_with_the_expected_methods() -> None:
     routes = {
         ("GET", "/api/v1/session"),
         ("GET", "/api/v1/me/verify/overview"),
+        ("GET", "/api/v1/me/verify/activity-trend"),
+        ("GET", "/api/v1/me/verify/sleep-trend"),
         ("GET", "/api/v1/me/verify/sources"),
         ("GET", "/api/v1/me/verify/settings"),
         ("GET", "/api/v1/me/verify/runs"),

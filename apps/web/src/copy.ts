@@ -34,6 +34,7 @@ export const PAGE_COPY = {
 } as const;
 
 export const TIMEZONES = [
+  "America/Argentina/Buenos_Aires",
   "UTC",
   "Europe/Madrid",
   "America/New_York",

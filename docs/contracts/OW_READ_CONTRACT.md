@@ -223,16 +223,42 @@ it demonstrates it or performs it explicitly.
   historical series.
 
 `events/sleep` may include `duration_seconds`, `sleep_duration_seconds`, and
-`sleep_stage_intervals`. The generic `sleeping` stage is preserved as such; do
-not invent specific stages.
+`sleep_stage_intervals`. Published `light`, `deep`, `rem`, and `awake` intervals
+are preserved in chronological order. The generic `sleeping` stage remains
+generic; unknown gaps remain `unknown` when the source does not establish sleep,
+and specific stages are never invented from totals. `unknown` intervals are
+clipped against explicit stages and generic `sleeping`, so only uncovered gaps
+are persisted and returned in an ordered, non-overlapping timeline. They
+contribute to neither `sleep_duration_seconds` nor awake/light/deep/rem totals.
+Nullable stage totals remain `null`; an explicit numeric zero remains zero.
+
+Aggregate composition and interval chronology are parallel evidence channels.
+The summary's `deep_minutes`, `light_minutes`, `rem_minutes`, and
+`awake_minutes` remain canonical aggregate values when present; a different
+valid interval distribution does not replace them. An aggregate-only session
+may return an empty `sleep_stage_intervals` list and remains usable for summary
+and composition views, but it cannot support a timeline. Specific-stage
+transition coverage may be less than aggregate composition without permitting
+the BFF to invent missing transitions.
+
+`sleep_duration_seconds` is net sleep and excludes awake and unclassified time
+in bed. For canonical aggregate data it corresponds to deep + light + REM;
+generic `sleeping` also counts as sleep when it is explicitly present in
+chronology. Aggregate composition allows
+`deep + light + rem + awake <= time_in_bed`; a positive remainder is
+unclassified time in bed, not an implied sleep stage. Aggregate or interval
+overcoverage and malformed/overlapping chronology remain invalid and fail
+closed.
 
 In the public fixture, the session from `2024-01-01T22:30:00Z` to
-`2024-01-02T06:30:00Z` contains 15 minutes of `in_bed`, 420 minutes of
-`sleeping`, and 45 minutes of `awake`. Therefore `duration_seconds` is `28800`,
+`2024-01-02T06:30:00Z` contains 10 minutes of `unknown`, 5 minutes of `in_bed`,
+420 minutes of sleep stages, and 45 minutes of `awake`. Therefore
+`duration_seconds` is `28800`,
 `sleep_duration_seconds` is `25200`, and the summary retains
 `duration_minutes` and `total_duration_minutes` as `420`. The corresponding BFF
-name is `sleepDurationSeconds`; it represents the `sleeping` interval, not all
-time in bed.
+name is `sleepDurationSeconds`; it represents net sleep, not all time in bed,
+whether OW publishes it from canonical aggregate stages or explicit sleeping
+intervals.
 
 ### 3.4 Body: Relative To `now`
 

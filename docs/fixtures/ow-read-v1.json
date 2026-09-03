@@ -279,13 +279,28 @@
           "sleep_stage_intervals": [
             {
               "start_time": "2024-01-01T22:30:00Z",
+              "end_time": "2024-01-01T22:40:00Z",
+              "stage": "unknown"
+            },
+            {
+              "start_time": "2024-01-01T22:40:00Z",
               "end_time": "2024-01-01T22:45:00Z",
               "stage": "in_bed"
             },
             {
               "start_time": "2024-01-01T22:45:00Z",
+              "end_time": "2024-01-02T03:05:00Z",
+              "stage": "light"
+            },
+            {
+              "start_time": "2024-01-02T03:05:00Z",
+              "end_time": "2024-01-02T04:45:00Z",
+              "stage": "deep"
+            },
+            {
+              "start_time": "2024-01-02T04:45:00Z",
               "end_time": "2024-01-02T05:45:00Z",
-              "stage": "sleeping"
+              "stage": "rem"
             },
             {
               "start_time": "2024-01-02T05:45:00Z",
@@ -509,7 +524,7 @@
     },
     "events_sleep": {
       "observed_ref": "responses.events_sleep.data[0]",
-      "expected_result": "sleep_event_with_generic_stage"
+      "expected_result": "sleep_event_with_specific_stages"
     },
     "sync_stream": {
       "observed_ref": "responses.sync_stream",

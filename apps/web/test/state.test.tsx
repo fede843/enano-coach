@@ -2,11 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/api";
-import { initialState, routeFromPath, shiftTrendDate, TREND_RANGES } from "../src/App";
+import { DEFAULT_TIMEZONE, initialState, routeFromPath, shiftSleepSelection, shiftTrendDate, TREND_RANGES } from "../src/App";
 import { isRetryBlocked, retryGateRemaining, retryRequestKind, shouldHandleRouteClick } from "../src/controller-state";
-import { formatMetricDetail, formatMetricValue, stateLabel, warningText } from "../src/format";
+import { formatMetricDetail, formatMetricValue, formatTimestamp, stateLabel, warningText } from "../src/format";
 import { focusInvalidField, validationFieldId } from "../src/validation";
-import { AppView, formatTrendBucketLabel, formatTrendPointLabel, formatTrendRangeLabel, renderErrorPanel, trendAxisTickLabel, trendAxisTicks, trendBarHeight, trendGuidePosition, trendMetricMaximum, trendMetricText, trendPointText } from "../src/view";
+ import { AppView, formatTrendBucketLabel, formatTrendPointLabel, formatTrendRangeLabel, renderErrorPanel, sleepDurationAxis, sleepDurationGuidePosition, sleepDurationMaximum, sleepNightDurationMaximum, sleepDurationSegments, sleepSchedulePosition, sleepHourBounds, sleepDurationBarHeight, sleepValue, sleepGuidePosition, trendAxisTickLabel, trendAxisTicks, trendBarHeight, trendGuidePosition, trendMetricMaximum, trendMetricText, trendPointText } from "../src/view";
 import type { AppState } from "../src/types";
 
 function activeState(overrides: Partial<AppState> = {}): AppState {
@@ -37,6 +37,11 @@ const actions = {
 };
 
 describe("controller and render state", () => {
+  it("uses Argentina as the explicit local default timezone", () => {
+    expect(DEFAULT_TIMEZONE).toBe("America/Argentina/Buenos_Aires");
+    expect(initialState("/verify").context.timezone).toBe(DEFAULT_TIMEZONE);
+  });
+
   it("uses user-facing range and localized calendar-month labels", () => {
     expect(formatTrendRangeLabel("daily")).toBe("Diario");
     expect(formatTrendRangeLabel("7d")).toBe("7 días");
@@ -53,6 +58,31 @@ describe("controller and render state", () => {
     expect(shiftTrendDate("2024-01-10", "7d", -1, "2024-12-31")).toBe("2024-01-03");
     expect(shiftTrendDate("2024-02-29", "monthly", 1, "2024-12-31")).toBe("2024-03-01");
     expect(shiftTrendDate("2024-01-01", "annual", 1, "2024-06-01")).toBe("2024-01-01");
+  });
+
+  it("applies rapid sleep navigation to the latest selected date", () => {
+    const first = shiftSleepSelection("2024-01-15", "daily", -1, "2024-12-31");
+    const second = shiftSleepSelection(first, "daily", -1, "2024-12-31");
+
+    expect(first).toBe("2024-01-14");
+    expect(second).toBe("2024-01-13");
+  });
+
+  it("keeps sleep controls mounted and hides chart data while the selected window loads", () => {
+    const state = activeState({
+      context: { date: "2024-01-15", timezone: "UTC" },
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-15T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-15", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "loading", error: null, envelope: null }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={{ ...actions, sleepDate: "2024-01-14", sleepRange: "daily", trendRanges: TREND_RANGES }} />);
+
+    expect(markup).toContain('data-testid="sleep-trend-panel"');
+    expect(markup).toContain('data-testid="sleep-trend-date"');
+    expect(markup).toContain('value="2024-01-14"');
+    expect(markup).toContain('data-testid="sleep-trend-body" aria-busy="true"');
+    expect(markup).toContain("Cargando sueño para la fecha y ventana seleccionadas");
+    expect(markup).not.toContain('data-testid="sleep-trend-schedule-chart"');
+    expect(markup).not.toContain('data-testid="sleep-trend-duration-chart"');
   });
 
   it("keeps a successful overview visible when the secondary trend fails", () => {
@@ -98,8 +128,8 @@ describe("controller and render state", () => {
     expect(trendMetricMaximum(points, "distanceMeters")).toBe(200);
     expect(trendBarHeight("value", 50, trendMetricMaximum(points, "distanceMeters"))).toBe("25%");
     expect(trendBarHeight("value", 50, 200)).toBe("25%");
-    expect(trendAxisTicks(4000)).toEqual([4000, 2000, 0]);
-    expect(trendAxisTicks(200)).toEqual([200, 100, 0]);
+    expect(trendAxisTicks(4000, "steps")).toEqual([4000, 2000, 0]);
+    expect(trendAxisTicks(200, "distanceMeters")).toEqual([500, 0]);
     expect(trendAxisTickLabel(2000, "steps")).toBe("2000");
     expect(trendAxisTickLabel(1000, "distanceMeters")).toBe("1 km");
   });
@@ -152,13 +182,14 @@ describe("controller and render state", () => {
     expect(markup.indexOf('trend-bar-group-label">Pasos')).toBeLessThan(markup.indexOf('trend-bar-group-label">Distancia'));
     expect(markup).toContain('aria-label="Escala de Pasos"');
     expect(markup).toContain('aria-label="Escala de Distancia"');
-      expect(markup).toContain('title="2024-01-02 · Pasos: 0 pasos · Estado: Parcial"');
-      expect(markup).toContain('class="trend-bar trend-partial trend-bar-numeric"');
+      expect(markup).not.toContain('title="2024-01-02 · Pasos: 0 pasos · Estado: Parcial"');
+      expect(markup).toContain('class="trend-bar trend-partial trend-bar-numeric chart-tooltip-target"');
+      expect(markup).toContain('data-tooltip-primitive="chart"');
       expect(markup).toContain('data-tooltip="Pasos: 0 pasos · Estado: Parcial"');
       expect(markup).not.toContain('data-tooltip="2024-01-02 ·');
       expect(markup).toContain('aria-label="2024-01-02: 0 pasos; estado Parcial"');
-      expect(markup).toContain('title="2024-01-03 · Distancia: Fuente ambigua · Estado: Fuente ambigua"');
-     expect(markup).not.toContain('tabindex="0" title="2024-01-03 · Distancia: Fuente ambigua');
+      expect(markup).not.toContain('data-tooltip="Distancia: Fuente ambigua · Estado: Fuente ambigua"');
+     expect(markup).not.toContain('tabindex="0" aria-label="2024-01-03: Fuente ambigua');
     expect(markup).toContain('aria-label="Seleccionar ventana Diario"');
     expect(markup).toContain('aria-label="Seleccionar ventana Anual"');
     expect(markup).toContain('aria-label="Seleccionar ventana 7D" aria-current="true" aria-pressed="true"');
@@ -178,9 +209,9 @@ describe("controller and render state", () => {
     const markup = renderToStaticMarkup(<AppView state={state} actions={actions} />);
     expect(markup.match(/aria-label="Escala de Pasos"/g)?.length).toBe(1);
     expect(markup.match(/aria-label="Escala de Distancia"/g)?.length).toBe(1);
-     expect(markup).toContain(">0</span><span>0</span><span>0</span>");
-     expect(markup).toContain(">2 km</span><span>1 km</span><span>0 m</span>");
-    expect(markup).toContain('class="trend-bar trend-zero trend-bar-numeric"');
+     expect(markup).toContain(">0</span>");
+     expect(markup).toContain(">2 km</span><span>1,5 km</span><span>1 km</span><span>500 m</span><span>0 m</span>");
+    expect(markup).toContain('class="trend-bar trend-zero trend-bar-numeric chart-tooltip-target"');
     expect(markup).toContain('class="trend-bar trend-null"');
     expect(markup).toContain('class="trend-bar trend-inconclusive"');
     expect(markup).toContain('class="trend-bar trend-empty"');
@@ -242,6 +273,494 @@ describe("controller and render state", () => {
     expect(markup).not.toContain(">Ausente</span>");
     expect(markup).toContain('aria-label="Seleccionar ventana 1M" aria-current="true" aria-pressed="true"');
     expect(markup).toContain('aria-label="Seleccionar ventana 7D" aria-pressed="false"');
+  });
+
+  it("renders sleep as a separate section with nap and accessible fallback semantics", () => {
+    const points = [
+      {
+        date: "2024-01-02",
+        nightSleepSeconds: { state: "value", value: 25200, unit: "seconds" },
+        napsSeconds: { state: "zero", value: 0, unit: "seconds" },
+        stages: {
+          awakeSeconds: { state: "value", value: 2700, unit: "seconds" },
+          lightSeconds: { state: "value", value: 15600, unit: "seconds" },
+          deepSeconds: { state: "value", value: 6000, unit: "seconds" },
+          remSeconds: { state: "value", value: 3600, unit: "seconds" }
+        },
+        bedtime: "2024-01-01T22:30:00Z",
+        wakeTime: "2024-01-02T06:30:00Z"
+      }
+    ];
+    const state = activeState({
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", range: "daily", bucketMode: "daily", nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 }, napsSeconds: { unit: "seconds", totalObserved: 0, averageObserved: 0, observedDays: 1, expectedDays: 1 }, awakeSeconds: { unit: "seconds", totalObserved: 2700, averageObserved: 2700, observedDays: 1, expectedDays: 1 }, lightSeconds: { unit: "seconds", totalObserved: 15600, averageObserved: 15600, observedDays: 1, expectedDays: 1 }, deepSeconds: { unit: "seconds", totalObserved: 6000, averageObserved: 6000, observedDays: 1, expectedDays: 1 }, remSeconds: { unit: "seconds", totalObserved: 3600, averageObserved: 3600, observedDays: 1, expectedDays: 1 }, observedDays: 1, points }, coverage: {}, warnings: [], extensions: {} } }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={{ ...actions, trendRange: "daily", trendRanges: TREND_RANGES }} />);
+    expect(markup).toContain("Sueño por ventana");
+    expect(markup).toContain("Siestas");
+    expect(markup).toContain("Horario local");
+     expect(markup).toContain("Promedio noche: <strong>7 h</strong>");
+    expect(markup).toContain("Horario");
+    expect(markup).toContain("Duración");
+      expect(markup).toContain("20:00");
+      expect(markup).toContain("06:00");
+    expect(markup).toContain("class=\"trend-bar sleep-bar sleep-night sleep-value trend-bar-numeric sleep-bar-numeric sleep-composition-bar chart-tooltip-target\"");
+     expect(markup).not.toContain("sleep-segment-nap");
+     expect(markup).not.toContain("class=\"sleep-bar sleep-nap");
+    expect(markup).toContain("etapas específicas observadas");
+    expect(markup).not.toContain("Etapas: awakeSeconds");
+  });
+
+  it("renders daily stages vertically in schedule and duration bars without visible timeline labels", () => {
+    const point = {
+      date: "2024-01-02",
+      nightSleepSeconds: { state: "value", value: 25200, unit: "seconds" },
+      napsSeconds: { state: "zero", value: 0, unit: "seconds" },
+      stages: {
+        awakeSeconds: { state: "value", value: 1800, unit: "seconds" },
+        lightSeconds: { state: "value", value: 12600, unit: "seconds" },
+        deepSeconds: { state: "value", value: 5400, unit: "seconds" },
+        remSeconds: { state: "value", value: 7200, unit: "seconds" }
+      },
+      bedtime: "2024-01-01T23:00:00Z",
+      wakeTime: "2024-01-02T06:00:00Z"
+    };
+    const trend = {
+      logicalDate: "2024-01-02", range: "daily" as const, bucketMode: "daily" as const,
+      nightSleepSeconds: { unit: "seconds" as const, totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 },
+      napsSeconds: { unit: "seconds" as const, totalObserved: 0, averageObserved: 0, observedDays: 1, expectedDays: 1 },
+      awakeSeconds: { unit: "seconds" as const, totalObserved: 1800, averageObserved: 1800, observedDays: 1, expectedDays: 1 },
+      lightSeconds: { unit: "seconds" as const, totalObserved: 12600, averageObserved: 12600, observedDays: 1, expectedDays: 1 },
+      deepSeconds: { unit: "seconds" as const, totalObserved: 5400, averageObserved: 5400, observedDays: 1, expectedDays: 1 },
+      remSeconds: { unit: "seconds" as const, totalObserved: 7200, averageObserved: 7200, observedDays: 1, expectedDays: 1 },
+      averageBedtime: point.bedtime, averageWakeTime: point.wakeTime, observedDays: 1, points: [point],
+      intervals: [
+        { start: "2024-01-01T23:00:00Z", end: "2024-01-02T02:30:00Z", category: "light" as const, isNap: false },
+        { start: "2024-01-02T02:30:00Z", end: "2024-01-02T04:00:00Z", category: "deep" as const, isNap: false },
+        { start: "2024-01-02T04:00:00Z", end: "2024-01-02T06:00:00Z", category: "rem" as const, isNap: false }
+      ]
+    };
+    const state = activeState({
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: trend, coverage: {}, warnings: [], extensions: {} } }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={actions} />);
+
+    expect(markup).not.toContain('class="sleep-schedule-segments"');
+    expect(markup).toContain('class="sleep-segment sleep-segment-awake chart-tooltip-target"');
+    expect(markup).toContain('data-stage-orientation="composition-only"');
+    expect(markup).toContain('data-tooltip-primitive="chart"');
+    expect(markup).toContain('class="sleep-event-timeline"');
+    expect(markup).toContain('class="sleep-event-track"');
+    expect(markup.match(/class="sleep-event sleep-event-(light|deep|rem) chart-tooltip-target"/g)?.length).toBe(3);
+    expect(markup.match(/class="sleep-event sleep-event-(light|deep|rem) chart-tooltip-target"[^>]*tabindex="0"[^>]*data-tooltip="[^"]+"[^>]*data-tooltip-primitive="chart"[^>]*data-tooltip-delay="immediate"[^>]*aria-label="[^"]+"/g)?.length).toBe(3);
+    expect(markup).toContain('data-tooltip-delay="immediate"');
+    expect(markup).toContain('data-stage-index="0"');
+    expect(markup).not.toContain('title="Ligero:');
+    expect(markup).not.toContain('>Ligero</span>');
+    expect(markup).not.toContain('aria-label="Leyenda del sueño"');
+    expect(markup).not.toContain('class="sleep-stage-card');
+    expect(markup).not.toContain('class="sleep-event-tooltip');
+    expect(markup).not.toContain('title="2024-01-02"');
+  });
+
+  it("keeps naps separate from both schedule and night duration bars", () => {
+    const point = {
+      date: "2024-01-02",
+      nightSleepSeconds: { state: "value", value: 25200, unit: "seconds" },
+      napsSeconds: { state: "value", value: 1800, unit: "seconds" },
+      stages: {
+        awakeSeconds: { state: "unsupported", value: null, unit: null },
+        lightSeconds: { state: "unsupported", value: null, unit: null },
+        deepSeconds: { state: "unsupported", value: null, unit: null },
+        remSeconds: { state: "unsupported", value: null, unit: null }
+      }, bedtime: "2024-01-01T22:30:00Z", wakeTime: "2024-01-02T06:30:00Z"
+    } as const;
+    expect(sleepDurationSegments(point as never)).toEqual([{ kind: "night", seconds: 25200 }]);
+    const absent = { ...point, napsSeconds: { state: "empty", value: null, unit: null } };
+    expect(sleepDurationSegments(absent as never)).toEqual([{ kind: "night", seconds: 25200 }]);
+  });
+
+  it("makes every sleep state marker focusable with honest tooltip detail", () => {
+    const states = ["null", "empty", "unsupported", "inconclusive", "source_ambiguous"] as const;
+    const points = states.map((state, index) => ({
+      date: `2024-01-0${index + 2}`,
+      nightSleepSeconds: { state, value: null, unit: null },
+      napsSeconds: { state, value: null, unit: null },
+      stages: {
+        awakeSeconds: { state: "unsupported", value: null, unit: null },
+        lightSeconds: { state: "unsupported", value: null, unit: null },
+        deepSeconds: { state: "unsupported", value: null, unit: null },
+        remSeconds: { state: "unsupported", value: null, unit: null }
+      },
+      bedtime: null,
+      wakeTime: null
+    }));
+    const trend = {
+      logicalDate: "2024-01-06", range: "7d" as const, bucketMode: "daily" as const,
+      nightSleepSeconds: { unit: "seconds" as const, totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 5 },
+      napsSeconds: { unit: "seconds" as const, totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 5 },
+      awakeSeconds: { unit: "seconds" as const, totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 5 },
+      lightSeconds: { unit: "seconds" as const, totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 5 },
+      deepSeconds: { unit: "seconds" as const, totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 5 },
+      remSeconds: { unit: "seconds" as const, totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 5 },
+      observedDays: 0, points
+    };
+    const state = activeState({
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-06T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-06", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-06T12:30:00Z", timezone: "UTC", data: trend, coverage: {}, warnings: [], extensions: {} } }
+    });
+    const markup = renderToStaticMarkup(<AppView state={state} actions={actions} />);
+    expect(markup.match(/class="trend-bar sleep-bar sleep-night sleep-(null|empty|unsupported|inconclusive|source_ambiguous) chart-tooltip-target"[^>]*tabindex="0"/g)?.length).toBe(5);
+    expect(markup).toContain("Noche · Horario no disponible · Duración: Sin medición · Estado: Sin medición");
+     expect(markup).not.toContain("class=\"sleep-bar sleep-nap");
+  });
+
+  it("keeps nap tooltip semantics honest when the BFF has no nap timestamps", () => {
+    const point = {
+      date: "2024-01-02",
+      nightSleepSeconds: { state: "value" as const, value: 25200, unit: "seconds" as const },
+      napsSeconds: { state: "value" as const, value: 1800, unit: "seconds" as const },
+      stages: {
+        awakeSeconds: { state: "unsupported" as const, value: null, unit: null },
+        lightSeconds: { state: "unsupported" as const, value: null, unit: null },
+        deepSeconds: { state: "unsupported" as const, value: null, unit: null },
+        remSeconds: { state: "unsupported" as const, value: null, unit: null }
+      },
+      bedtime: "2024-01-01T22:30:00Z",
+      wakeTime: "2024-01-02T06:30:00Z"
+    };
+    const markup = renderToStaticMarkup(<AppView state={activeState({
+      context: { date: "2024-01-02", timezone: "UTC" },
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", range: "daily", bucketMode: "daily", nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 }, napsSeconds: { unit: "seconds", totalObserved: 1800, averageObserved: 1800, observedDays: 1, expectedDays: 1 }, awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, observedDays: 1, points: [point] }, coverage: {}, warnings: [], extensions: {} } }
+    })} actions={actions} />);
+     expect(markup).not.toContain('data-tooltip="Siesta · Horario no disponible · Duración: 30 min · Estado: Observado"');
+    expect(markup).not.toContain("Siesta · 01/02");
+  });
+
+  it("uses the night-only scale and excludes naps from duration bar height", () => {
+    const points = [
+      { nightSleepSeconds: { state: "value", value: 25200 }, napsSeconds: { state: "value", value: 3600 } },
+      { nightSleepSeconds: { state: "value", value: 21600 }, napsSeconds: { state: "value", value: 28800 } }
+    ] as Parameters<typeof sleepDurationMaximum>[0];
+    expect(sleepDurationMaximum(points)).toBe(1);
+    expect(sleepNightDurationMaximum(points)).toBe(28800);
+    expect(sleepDurationBarHeight([{ kind: "night", seconds: 21600 }], sleepNightDurationMaximum(points))).toBe("75%");
+  });
+
+  it("maps overnight UTC intervals to local floating schedule positions", () => {
+    expect(sleepSchedulePosition("2024-01-01T22:30:00Z", "2024-01-02T06:30:00Z", "Europe/Madrid")).toMatchObject({ height: "16.666666666666664%" });
+    expect(sleepSchedulePosition("2024-01-01T23:30:00Z", "2024-01-02T07:30:00Z", "America/New_York")).toMatchObject({ height: "16.666666666666664%" });
+  });
+
+  it("uses compact schedule bounds and h:min sleep values", () => {
+    const points = [{ bedtime: "2024-01-01T22:30:00Z", wakeTime: "2024-01-02T06:30:00Z" }];
+    expect(sleepHourBounds(points, "UTC")).toEqual({ min: 20, max: 34 });
+    expect(sleepValue(25_200)).toBe("7 h");
+    expect(sleepValue(0)).toBe("0 h");
+    expect(sleepValue(null)).toBe("Sin medición");
+  });
+
+  it("keeps the full overnight interval in safe schedule bounds", () => {
+    const points = [{ bedtime: "2024-01-01T23:30:00Z", wakeTime: "2024-01-02T07:30:00Z" }];
+    expect(sleepHourBounds(points, "UTC")).toEqual({ min: 20, max: 34 });
+    expect(sleepSchedulePosition(points[0].bedtime, points[0].wakeTime, "UTC", { min: 23, max: 35 })).toEqual({ top: "29.166666666666657%", height: "66.66666666666666%" });
+  });
+
+  it("preserves midnight as a valid average guide position", () => {
+    const guide = renderToStaticMarkup(<AppView state={activeState({ context: { date: "2024-01-02", timezone: "UTC" },
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", range: "daily", bucketMode: "daily", nightSleepSeconds: { unit: "seconds", totalObserved: 1, averageObserved: 1, observedDays: 1, expectedDays: 1 }, napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, observedDays: 1, averageBedtime: "2024-01-02T00:00:00Z", averageWakeTime: null, points: [{ date: "2024-01-02", nightSleepSeconds: { state: "value", value: 1, unit: "seconds" }, napsSeconds: { state: "empty", value: null, unit: null }, stages: { awakeSeconds: { state: "unsupported", value: null, unit: null }, lightSeconds: { state: "unsupported", value: null, unit: null }, deepSeconds: { state: "unsupported", value: null, unit: null } , remSeconds: { state: "unsupported", value: null, unit: null } }, bedtime: null, wakeTime: null }] }, coverage: {}, warnings: [], extensions: {} } }
+    })} actions={actions} />);
+    expect(sleepGuidePosition(0, 22, { min: 23, max: 35 })).toBe("91.66666666666667%");
+    expect(guide).toContain('class="sleep-average-guide sleep-average-bedtime"');
+    expect(guide).not.toContain("top: NaN");
+  });
+
+  it("keeps morning average guides within the normalized schedule domain", () => {
+    expect(sleepGuidePosition(6, 22, { min: 23, max: 35 })).toBe("41.666666666666664%");
+    expect(sleepGuidePosition(11, 22, { min: 23, max: 35 })).toBe("0%");
+    expect(Number.parseFloat(sleepGuidePosition(0, 22, { min: 23, max: 35 }) || "-1")).toBeGreaterThanOrEqual(0);
+    expect(Number.parseFloat(sleepGuidePosition(11, 22, { min: 23, max: 35 }) || "101")).toBeLessThanOrEqual(100);
+  });
+
+  it("keeps only the comparable average guide in a mixed schedule response", () => {
+    const point = {
+      date: "2024-01-02",
+      nightSleepSeconds: { state: "value" as const, value: 25200, unit: "seconds" as const },
+      napsSeconds: { state: "empty" as const, value: null, unit: null },
+      stages: {
+        awakeSeconds: { state: "unsupported" as const, value: null, unit: null },
+        lightSeconds: { state: "unsupported" as const, value: null, unit: null },
+        deepSeconds: { state: "unsupported" as const, value: null, unit: null },
+        remSeconds: { state: "unsupported" as const, value: null, unit: null }
+      },
+      bedtime: "2024-01-01T23:00:00Z",
+      wakeTime: "2024-01-02T07:00:00Z"
+    };
+    const markup = renderToStaticMarkup(<AppView state={activeState({
+      context: { date: "2024-01-02", timezone: "UTC" },
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", range: "7d", bucketMode: "daily", nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 7 }, napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 7 }, awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 7 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 7 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 7 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 7 }, observedDays: 1, points: [point], averageBedtime: "2024-01-01T15:00:00Z", averageWakeTime: "2024-01-02T06:00:00Z" }, coverage: {}, warnings: [], extensions: {} } }
+    })} actions={actions} />);
+    expect(markup).not.toContain("sleep-guide-key-bedtime");
+    expect(markup).toContain("sleep-guide-key-wake");
+    expect(markup).not.toContain("sleep-average-bedtime");
+    expect(markup).toContain('class="sleep-average-guide sleep-average-wake"');
+  });
+
+  it("does not render schedule guide legend entries when averages are absent", () => {
+    const point = {
+      date: "2024-01-02",
+      nightSleepSeconds: { state: "value" as const, value: 25200, unit: "seconds" as const },
+      napsSeconds: { state: "empty" as const, value: null, unit: null },
+      stages: {
+        awakeSeconds: { state: "unsupported" as const, value: null, unit: null },
+        lightSeconds: { state: "unsupported" as const, value: null, unit: null },
+        deepSeconds: { state: "unsupported" as const, value: null, unit: null },
+        remSeconds: { state: "unsupported" as const, value: null, unit: null }
+      },
+      bedtime: "2024-01-01T23:00:00Z",
+      wakeTime: "2024-01-02T07:00:00Z"
+    };
+    const markup = renderToStaticMarkup(<AppView state={activeState({
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", range: "daily", bucketMode: "daily", nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 }, napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, observedDays: 1, points: [point], averageBedtime: null, averageWakeTime: null }, coverage: {}, warnings: [], extensions: {} } }
+    })} actions={actions} />);
+    expect(markup).not.toContain("sleep-guide-key-bedtime");
+    expect(markup).not.toContain("sleep-guide-key-wake");
+  });
+
+  it("renders duration ticks with h/min units and only existing sleep guides", () => {
+    const point = {
+      date: "2024-01-02",
+      nightSleepSeconds: { state: "value" as const, value: 25200, unit: "seconds" as const },
+      napsSeconds: { state: "empty" as const, value: null, unit: null },
+      stages: {
+        awakeSeconds: { state: "unsupported" as const, value: null, unit: null }, lightSeconds: { state: "unsupported" as const, value: null, unit: null },
+        deepSeconds: { state: "unsupported" as const, value: null, unit: null }, remSeconds: { state: "unsupported" as const, value: null, unit: null }
+      }, bedtime: "2024-01-01T22:30:00Z", wakeTime: "2024-01-02T06:30:00Z"
+    };
+    const markup = renderToStaticMarkup(<AppView state={activeState({
+      context: { date: "2024-01-02", timezone: "UTC" },
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", range: "daily", bucketMode: "daily", nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 }, napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, observedDays: 1, points: [point] } , coverage: {}, warnings: [], extensions: {} } }
+    })} actions={{ ...actions, trendRange: "7d", trendRanges: TREND_RANGES }} />);
+    expect(renderToStaticMarkup(sleepDurationAxis(25200))).toContain('aria-label="Escala de duración del sueño"');
+    expect(renderToStaticMarkup(sleepDurationAxis(25200))).toContain("6 h");
+    expect(markup).not.toContain("Hora media de despertarse</span>");
+    expect(markup).toContain("Promedio noche:");
+  });
+
+  it("renders the average night duration guide in duration mode", () => {
+    const point = {
+      date: "2024-01-02",
+      nightSleepSeconds: { state: "value" as const, value: 25200, unit: "seconds" as const },
+      napsSeconds: { state: "empty" as const, value: null, unit: null },
+      stages: {
+        awakeSeconds: { state: "unsupported" as const, value: null, unit: null },
+        lightSeconds: { state: "unsupported" as const, value: null, unit: null },
+        deepSeconds: { state: "unsupported" as const, value: null, unit: null },
+        remSeconds: { state: "unsupported" as const, value: null, unit: null }
+      },
+      bedtime: "2024-01-01T22:30:00Z",
+      wakeTime: "2024-01-02T06:30:00Z"
+    };
+    const markup = renderToStaticMarkup(<AppView state={activeState({
+      context: { date: "2024-01-02", timezone: "UTC" },
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", range: "daily", bucketMode: "daily", nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 }, napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, observedDays: 1, points: [point] } , coverage: {}, warnings: [], extensions: {} } }
+    })} actions={{ ...actions, sleepMode: "duration" } as typeof actions & { sleepMode: "duration" }} />);
+    expect(sleepDurationGuidePosition(25200, 25200)).toBe("100%");
+    expect(markup).toContain('class="sleep-average-guide sleep-average-duration"');
+    expect(markup).toContain('data-testid="sleep-trend-duration-chart"');
+  });
+
+  it("uses the duration composition categories inside non-daily schedule bars without chronology claims", () => {
+    const point = {
+      date: "2024-01-02",
+      nightSleepSeconds: { state: "value" as const, value: 25200, unit: "seconds" as const },
+      napsSeconds: { state: "zero" as const, value: 0, unit: "seconds" as const },
+      unclassifiedSeconds: { state: "value" as const, value: 3600, unit: "seconds" as const },
+      stages: {
+        awakeSeconds: { state: "value" as const, value: 1800, unit: "seconds" as const },
+        lightSeconds: { state: "value" as const, value: 9000, unit: "seconds" as const },
+        deepSeconds: { state: "value" as const, value: 5400, unit: "seconds" as const },
+        remSeconds: { state: "value" as const, value: 7200, unit: "seconds" as const }
+      },
+      bedtime: "2024-01-01T23:00:00Z",
+      wakeTime: "2024-01-02T06:00:00Z"
+    };
+    const trend = {
+      logicalDate: "2024-01-02", range: "7d" as const, bucketMode: "daily" as const,
+      nightSleepSeconds: { unit: "seconds" as const, totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 7 },
+      napsSeconds: { unit: "seconds" as const, totalObserved: 0, averageObserved: 0, observedDays: 1, expectedDays: 7 },
+      awakeSeconds: { unit: "seconds" as const, totalObserved: 1800, averageObserved: 1800, observedDays: 1, expectedDays: 7 },
+      lightSeconds: { unit: "seconds" as const, totalObserved: 9000, averageObserved: 9000, observedDays: 1, expectedDays: 7 },
+      deepSeconds: { unit: "seconds" as const, totalObserved: 5400, averageObserved: 5400, observedDays: 1, expectedDays: 7 },
+      remSeconds: { unit: "seconds" as const, totalObserved: 7200, averageObserved: 7200, observedDays: 1, expectedDays: 7 },
+      observedDays: 1,
+      points: [point],
+      intervals: []
+    };
+    const state = activeState({
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: trend, coverage: {}, warnings: [], extensions: {} } }
+    });
+    const schedule = renderToStaticMarkup(<AppView state={state} actions={{ ...actions, sleepMode: "schedule", sleepRange: "7d", trendRanges: TREND_RANGES }} />);
+    const duration = renderToStaticMarkup(<AppView state={state} actions={{ ...actions, sleepMode: "duration", sleepRange: "7d", trendRanges: TREND_RANGES }} />);
+
+    for (const category of ["awake", "unclassified", "light", "deep", "rem"]) {
+      expect(schedule).toContain(`sleep-segment-${category}`);
+      expect(duration).toContain(`sleep-segment-${category}`);
+    }
+    expect(schedule).toContain('data-stage-orientation="composition-only"');
+    expect(schedule).toContain('aria-label="Sin clasificar · Duración: 1 h · Estado: Observado"');
+    expect(schedule).toContain('aria-label="Despierto · Duración: 0 h 30 min · Estado: Observado"');
+    expect(schedule).not.toContain("sleep-segment-in_bed");
+    expect(schedule).not.toContain("sleep-segment-unknown");
+    expect(schedule).not.toContain('data-stage-orientation="vertical-time"');
+
+    const genericPoint = {
+      ...point,
+      unclassifiedSeconds: undefined,
+      stages: {
+        awakeSeconds: { state: "unsupported" as const, value: null, unit: null },
+        lightSeconds: { state: "unsupported" as const, value: null, unit: null },
+        deepSeconds: { state: "unsupported" as const, value: null, unit: null },
+        remSeconds: { state: "unsupported" as const, value: null, unit: null }
+      }
+    };
+    const genericState = activeState({
+      page: state.page,
+      sleepTrend: { ...state.sleepTrend!, envelope: { ...state.sleepTrend!.envelope!, data: { ...trend, points: [genericPoint] } } }
+    });
+    const genericSchedule = renderToStaticMarkup(<AppView state={genericState} actions={{ ...actions, sleepMode: "schedule", sleepRange: "7d", trendRanges: TREND_RANGES }} />);
+    const genericDuration = renderToStaticMarkup(<AppView state={genericState} actions={{ ...actions, sleepMode: "duration", sleepRange: "7d", trendRanges: TREND_RANGES }} />);
+    expect(genericSchedule).not.toContain("sleep-segment-night");
+    expect(genericDuration).not.toContain("sleep-segment-night");
+    expect(genericSchedule).not.toContain('aria-label="Sueño genérico · Duración: 7 h · Estado: Observado"');
+  });
+
+  it("omits duration guides when the average is unavailable", () => {
+    expect(sleepDurationGuidePosition(null, 25200)).toBe(null);
+    expect(sleepDurationGuidePosition(25200, 25200)).toBe("100%");
+  });
+
+  it("keeps an overnight schedule inside a fixed local night window", () => {
+    expect(sleepHourBounds([{ bedtime: "2024-01-02T01:30:00Z", wakeTime: "2024-01-02T09:00:00Z" }], "UTC")).toEqual({ min: 22, max: 36 });
+    expect(sleepSchedulePosition("2024-01-02T01:30:00Z", "2024-01-02T09:00:00Z", "UTC", { min: 23, max: 35 })).toMatchObject({ height: "62.5%" });
+  });
+
+  it("renders generic sleep intervals in chronological order with explicit labels", () => {
+    const point = {
+      date: "2024-01-02",
+      nightSleepSeconds: { state: "value" as const, value: 25200, unit: "seconds" as const },
+      napsSeconds: { state: "zero" as const, value: 0, unit: "seconds" as const },
+      stages: {
+        awakeSeconds: { state: "unsupported" as const, value: null, unit: null },
+        lightSeconds: { state: "unsupported" as const, value: null, unit: null },
+        deepSeconds: { state: "unsupported" as const, value: null, unit: null },
+        remSeconds: { state: "unsupported" as const, value: null, unit: null }
+      }, bedtime: null, wakeTime: null
+    };
+    const trend = {
+      logicalDate: "2024-01-02", range: "daily" as const, bucketMode: "daily" as const,
+      nightSleepSeconds: { unit: "seconds" as const, totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 },
+      napsSeconds: { unit: "seconds" as const, totalObserved: 0, averageObserved: 0, observedDays: 1, expectedDays: 1 },
+      awakeSeconds: { unit: "seconds" as const, totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, lightSeconds: { unit: "seconds" as const, totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, deepSeconds: { unit: "seconds" as const, totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, remSeconds: { unit: "seconds" as const, totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, observedDays: 1, points: [point], intervals: [
+        { start: "2024-01-02T02:00:00Z", end: "2024-01-02T03:00:00Z", category: "unknown" as const, isNap: false },
+        { start: "2024-01-02T00:00:00Z", end: "2024-01-02T01:00:00Z", category: "sleeping" as const, isNap: false }
+      ]
+    };
+    const markup = renderToStaticMarkup(<AppView state={activeState({
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: trend, coverage: {}, warnings: [], extensions: {} } }
+    })} actions={actions} />);
+    expect(markup).toContain('aria-label="Sueño genérico · 1 ene 2024, 21:00 → 1 ene 2024, 22:00 · Duración: 1 h"');
+    expect(markup).toContain('aria-label="Desconocido · 1 ene 2024, 23:00 → 2 ene 2024, 0:00 · Duración: 1 h"');
+    expect(markup).not.toContain("sleep-event-rem");
+  });
+
+  it("formats duration axis ticks as hours and minutes", () => {
+    const markup = renderToStaticMarkup(sleepDurationAxis(50400));
+    expect(markup).toContain("15 h");
+    expect(markup).toContain("10 h");
+    expect(markup).toContain("5 h");
+    expect(markup).toContain("0 h");
+  });
+
+  it("scales a duration bar by the maximum instead of the segment total", () => {
+    expect(sleepDurationBarHeight([{ kind: "night", seconds: 25_200 }], 28_800)).toBe("87.5%");
+  });
+
+  it.each([
+    ["value", "Observado"],
+    ["zero", "Cero real"],
+    ["partial", "Parcial"],
+    ["empty", "Sin datos"],
+    ["null", "Sin medición"],
+    ["unsupported", "No soportado"],
+    ["source_ambiguous", "Fuente ambigua"],
+    ["inconclusive", "Inconclusa"]
+  ])("includes the explicit sleep point state %s in accessible rows", (state, label) => {
+    const metric = { state, value: state === "value" ? 25200 : state === "zero" ? 0 : null, unit: state === "value" || state === "zero" ? "seconds" : null };
+    const points = [{
+      date: "2024-01-02",
+      nightSleepSeconds: metric,
+      napsSeconds: metric,
+      stages: {
+        awakeSeconds: { state: "unsupported", value: null, unit: null },
+        lightSeconds: { state: "unsupported", value: null, unit: null },
+        deepSeconds: { state: "unsupported", value: null, unit: null },
+        remSeconds: { state: "unsupported", value: null, unit: null }
+      },
+      bedtime: null,
+      wakeTime: null
+    }];
+    const stateValue = activeState({
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "UTC", data: { logicalDate: "2024-01-02", range: "daily", bucketMode: "daily", nightSleepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, napsSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, observedDays: 0, points }, coverage: {}, warnings: [], extensions: {} } }
+    });
+    const markup = renderToStaticMarkup(<AppView state={stateValue} actions={actions} />);
+    expect(markup).toContain(`estado: ${label}`);
+    expect(markup).toContain("no publica etapas");
+  });
+
+  it("rejects invalid UTC timestamps in the frontend presentation", () => {
+    expect(formatTimestamp("2024-99-99T99:99:99Z", "UTC")).toBe("Fecha no disponible");
+  });
+
+  it("renders localized sleep times and preserves daily and calendar-month bucket modes", () => {
+    const point = {
+      date: "2024-01-02",
+      nightSleepSeconds: { state: "value", value: 25200, unit: "seconds" },
+      napsSeconds: { state: "zero", value: 0, unit: "seconds" },
+      stages: {
+        awakeSeconds: { state: "unsupported", value: null, unit: null },
+        lightSeconds: { state: "unsupported", value: null, unit: null },
+        deepSeconds: { state: "unsupported", value: null, unit: null },
+        remSeconds: { state: "unsupported", value: null, unit: null }
+      },
+      bedtime: "2024-01-01T22:30:00Z",
+      wakeTime: "2024-01-02T06:30:00Z"
+    };
+    const makeState = (range: "daily" | "annual", bucketMode: "daily" | "calendar-month") => activeState({
+      page: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "Europe/Madrid", data: { logicalDate: "2024-01-02", summary: {} }, coverage: { availableDays: 1 }, warnings: [], extensions: {} } },
+      context: { date: "2024-01-02", timezone: "Europe/Madrid" },
+      sleepTrend: { status: "ready", error: null, envelope: { schemaVersion: "1", asOf: "2024-01-02T12:30:00Z", timezone: "Europe/Madrid", data: { logicalDate: "2024-01-02", range, bucketMode, nightSleepSeconds: { unit: "seconds", totalObserved: 25200, averageObserved: 25200, observedDays: 1, expectedDays: 1 }, napsSeconds: { unit: "seconds", totalObserved: 0, averageObserved: 0, observedDays: 1, expectedDays: 1 }, awakeSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, lightSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, deepSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, remSeconds: { unit: "seconds", totalObserved: null, averageObserved: null, observedDays: 0, expectedDays: 1 }, observedDays: 1, points: [point] }, coverage: {}, warnings: [], extensions: {} } }
+    });
+    const dailyMarkup = renderToStaticMarkup(<AppView state={makeState("daily", "daily")} actions={actions} />);
+    expect(dailyMarkup).toContain("Horario local");
+    expect(dailyMarkup).toContain("23:30");
+    expect(dailyMarkup).toContain("23:30");
+    expect(dailyMarkup).toContain("7:30");
+    expect(dailyMarkup).toContain("Diario");
+    const annualMarkup = renderToStaticMarkup(<AppView state={makeState("annual", "calendar-month")} actions={actions} />);
+    expect(annualMarkup).toContain("Anual");
+    expect(annualMarkup).toContain('aria-label="Resumen mensual de duración del sueño"');
+    expect(annualMarkup).toContain(">ene</span>");
   });
 
   it("renders long-range buckets with localized labels and preserves the overview", () => {

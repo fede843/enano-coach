@@ -1,0 +1,166 @@
+{
+  "synthetic": true,
+  "safety": {
+    "containsRealData": false,
+    "containsPrivateIdentifiers": false,
+    "containsSecrets": false,
+    "containsGeodata": false
+  },
+  "data": {
+    "logicalDate": "2024-01-02",
+    "range": "7d",
+    "nightSleepSeconds": {
+      "unit": "seconds",
+      "totalObserved": null,
+      "averageObserved": null,
+      "observedDays": 2,
+      "expectedDays": 7,
+      "state": "source_ambiguous"
+    },
+    "napsSeconds": {
+      "unit": "seconds",
+      "totalObserved": null,
+      "averageObserved": null,
+      "observedDays": 0,
+      "expectedDays": 7,
+      "state": "source_ambiguous"
+    },
+    "awakeSeconds": {
+      "unit": "seconds",
+      "totalObserved": null,
+      "averageObserved": null,
+      "observedDays": 2,
+      "expectedDays": 7,
+      "state": "source_ambiguous"
+    },
+    "lightSeconds": {
+      "unit": "seconds",
+      "totalObserved": null,
+      "averageObserved": null,
+      "observedDays": 2,
+      "expectedDays": 7,
+      "state": "source_ambiguous"
+    },
+    "deepSeconds": {
+      "unit": "seconds",
+      "totalObserved": null,
+      "averageObserved": null,
+      "observedDays": 2,
+      "expectedDays": 7,
+      "state": "source_ambiguous"
+    },
+    "remSeconds": {
+      "unit": "seconds",
+      "totalObserved": null,
+      "averageObserved": null,
+      "observedDays": 2,
+      "expectedDays": 7,
+      "state": "source_ambiguous"
+    },
+    "points": [
+      {
+        "date": "2023-12-27",
+        "nightSleepSeconds": { "state": "empty", "value": null, "unit": null },
+        "napsSeconds": { "state": "empty", "value": null, "unit": null },
+        "unclassifiedSeconds": { "state": "empty", "value": null, "unit": null },
+        "stages": {
+          "awakeSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "lightSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "deepSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "remSeconds": { "state": "unsupported", "value": null, "unit": null }
+        },
+        "bedtime": null,
+        "wakeTime": null
+      },
+      {
+        "date": "2023-12-28",
+        "nightSleepSeconds": { "state": "empty", "value": null, "unit": null },
+        "napsSeconds": { "state": "empty", "value": null, "unit": null },
+        "unclassifiedSeconds": { "state": "empty", "value": null, "unit": null },
+        "stages": {
+          "awakeSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "lightSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "deepSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "remSeconds": { "state": "unsupported", "value": null, "unit": null }
+        },
+        "bedtime": null,
+        "wakeTime": null
+      },
+      {
+        "date": "2023-12-29",
+        "nightSleepSeconds": { "state": "empty", "value": null, "unit": null },
+        "napsSeconds": { "state": "empty", "value": null, "unit": null },
+        "unclassifiedSeconds": { "state": "empty", "value": null, "unit": null },
+        "stages": {
+          "awakeSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "lightSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "deepSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "remSeconds": { "state": "unsupported", "value": null, "unit": null }
+        },
+        "bedtime": null,
+        "wakeTime": null
+      },
+      {
+        "date": "2023-12-30",
+        "nightSleepSeconds": { "state": "empty", "value": null, "unit": null },
+        "napsSeconds": { "state": "empty", "value": null, "unit": null },
+        "unclassifiedSeconds": { "state": "empty", "value": null, "unit": null },
+        "stages": {
+          "awakeSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "lightSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "deepSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "remSeconds": { "state": "unsupported", "value": null, "unit": null }
+        },
+        "bedtime": null,
+        "wakeTime": null
+      },
+      {
+        "date": "2023-12-31",
+        "nightSleepSeconds": { "state": "empty", "value": null, "unit": null },
+        "napsSeconds": { "state": "empty", "value": null, "unit": null },
+        "unclassifiedSeconds": { "state": "empty", "value": null, "unit": null },
+        "stages": {
+          "awakeSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "lightSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "deepSeconds": { "state": "unsupported", "value": null, "unit": null },
+          "remSeconds": { "state": "unsupported", "value": null, "unit": null }
+        },
+        "bedtime": null,
+        "wakeTime": null
+      },
+      {
+        "date": "2024-01-01",
+        "nightSleepSeconds": { "state": "value", "value": 25200, "unit": "seconds" },
+        "napsSeconds": { "state": "empty", "value": null, "unit": null },
+        "unclassifiedSeconds": { "state": "zero", "value": 0, "unit": "seconds" },
+        "stages": {
+          "awakeSeconds": { "state": "value", "value": 1800, "unit": "seconds" },
+          "lightSeconds": { "state": "value", "value": 12600, "unit": "seconds" },
+          "deepSeconds": { "state": "value", "value": 5400, "unit": "seconds" },
+          "remSeconds": { "state": "value", "value": 7200, "unit": "seconds" }
+        },
+        "bedtime": "2024-01-01T22:30:00Z",
+        "wakeTime": "2024-01-02T06:30:00Z"
+      },
+      {
+        "date": "2024-01-02",
+        "nightSleepSeconds": { "state": "value", "value": 24000, "unit": "seconds" },
+        "napsSeconds": { "state": "empty", "value": null, "unit": null },
+        "unclassifiedSeconds": { "state": "zero", "value": 0, "unit": "seconds" },
+        "stages": {
+          "awakeSeconds": { "state": "value", "value": 1200, "unit": "seconds" },
+          "lightSeconds": { "state": "value", "value": 12000, "unit": "seconds" },
+          "deepSeconds": { "state": "value", "value": 4800, "unit": "seconds" },
+          "remSeconds": { "state": "value", "value": 7200, "unit": "seconds" }
+        },
+        "bedtime": "2024-01-01T22:30:00Z",
+        "wakeTime": "2024-01-02T06:30:00Z"
+      }
+    ],
+    "bucketMode": "daily",
+    "observedDays": 2,
+    "averageBedtime": null,
+    "averageWakeTime": null,
+    "intervals": []
+  }
+}

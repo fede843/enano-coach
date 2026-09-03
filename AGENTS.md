@@ -298,3 +298,13 @@ dry-run, disposable, or against synthetic fixtures. Do not run Docker, Ansible,
 without explicit separate user authorization. Production/release mode still
 requires the immutable reference, backup/restore, rollback, and deployment
 gates described above.
+
+### Frontend validation
+
+`[FIXED]` Frontend changes require a fresh simulated browser context when the
+tooling is available: load the UI, interact with the changed controls, inspect
+console messages and failed requests, and verify the resulting DOM and visual
+state. A desktop or mobile screenshot is useful when layout or chart styling
+changes. HTTP and unit checks alone do not close a UI task. Keep this browser
+check proportional to the changed surface and report it as unavailable rather
+than claiming browser verification when the tooling cannot run.

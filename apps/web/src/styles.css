@@ -13,6 +13,9 @@
   --coral-dark: #a73528;
   --yellow: #f5d477;
   --blue: #b9d7fa;
+  --sleep-night: #315c78;
+  --sleep-nap: #d79d45;
+  --chart-guide: var(--coral-dark);
   --shadow: 7px 7px 0 rgba(18, 24, 39, 0.12);
   --display: "Trebuchet MS", "Segoe UI", sans-serif;
   --body: Arial, "Helvetica Neue", sans-serif;
@@ -29,6 +32,7 @@
 
 html {
   min-width: 320px;
+  overflow-x: clip;
   background: var(--paper);
 }
 
@@ -593,27 +597,96 @@ button:disabled {
 .trend-summary strong { color: var(--ink); }
 .trend-legend { display: flex; flex-wrap: wrap; gap: .8rem 1.2rem; margin-top: .85rem; color: var(--muted); font: .68rem var(--mono); }
 .trend-legend span { display: inline-flex; align-items: center; gap: .35rem; }
-.trend-legend-line { width: 1.3rem; border-top: 2px dotted var(--coral-dark); }
+.trend-legend-line { width: 1.3rem; border-top: 2px dashed var(--coral-dark); opacity: .78; }
 .trend-legend-absence { width: .75rem; height: .75rem; border: 1px solid var(--line-dark); background: repeating-linear-gradient(135deg, var(--line), var(--line) 3px, transparent 3px, transparent 6px); }
 .trend-bars { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.1rem; margin: 1.4rem 0; min-width: 0; }
 .trend-series { position: relative; display: grid; grid-template-columns: auto minmax(2.7rem, 3.5rem) minmax(0, 1fr); align-items: stretch; gap: .7rem; min-width: 0; padding: .8rem .75rem .75rem; border-bottom: 2px solid var(--ink); background: #f8f3e6; }
 .trend-series .trend-bar-group-label { align-self: start; padding-top: .2rem; font: 700 .7rem var(--mono); }
 .trend-axis { display: flex; height: 10rem; flex-direction: column; justify-content: space-between; align-items: end; color: var(--muted); font: .62rem var(--mono); line-height: 1; }
 .trend-plot-area { min-width: 0; }
-.trend-plot { position: relative; display: flex; align-items: end; gap: clamp(.12rem, .45vw, .45rem); height: 10rem; min-width: 0; border-left: 1px solid var(--line-dark); border-bottom: 1px solid var(--line-dark); background: repeating-linear-gradient(to bottom, transparent 0, transparent calc(50% - 1px), rgba(154, 152, 143, .25) 50%, transparent calc(50% + 1px)); }
+.trend-plot { position: relative; display: flex; align-items: end; gap: clamp(.12rem, .45vw, .45rem); height: 10rem; min-width: 0; border-left: 1px solid var(--line-dark); border-bottom: 1px solid var(--line-dark); background: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--trend-grid-step, 50%) - 1px), rgba(154, 152, 143, .25) var(--trend-grid-step, 50%), transparent calc(var(--trend-grid-step, 50%) + 1px)); }
 .trend-bar-labels { display: flex; gap: clamp(.12rem, .45vw, .45rem); min-width: 0; padding-top: .35rem; color: var(--muted); font: .58rem var(--mono); text-align: center; }
 .trend-bar-labels span { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: clip; white-space: nowrap; }
 .trend-bar.trend-empty, .trend-bar.trend-null, .trend-bar.trend-source_ambiguous, .trend-bar.trend-inconclusive { height: 0 !important; }
 .trend-bar { position: relative; flex: 1 1 0; min-width: 0; background: var(--mint-deep); border: 1px solid var(--ink); }
 .trend-bar-numeric { min-height: .3rem; }
-.trend-bar-numeric::after { position: absolute; bottom: calc(100% + .45rem); left: 50%; z-index: 4; display: none; max-width: min(18rem, 70vw); padding: .4rem .5rem; transform: translateX(-50%); border: 1px solid var(--ink); background: var(--ink); color: var(--paper-bright); content: attr(data-tooltip); font: 700 .65rem/1.35 var(--mono); pointer-events: none; white-space: normal; }
-.trend-bar-numeric:hover::after, .trend-bar-numeric:focus-visible::after { display: block; }
-.trend-bar:focus-visible { z-index: 3; outline: 3px solid var(--coral); outline-offset: 2px; }
-.trend-average-guide { position: absolute; right: 0; left: 0; z-index: 2; border-top: 2px dotted var(--coral-dark); pointer-events: none; }
+.chart-tooltip-target::after { position: absolute; bottom: calc(100% + .45rem); left: 50%; z-index: 20; width: max-content; max-width: min(18rem, 70vw); padding: .4rem .5rem; transform: translate(-50%, .2rem); border: 1px solid var(--ink); background: var(--ink); color: var(--paper-bright); content: attr(data-tooltip); font: 700 .65rem/1.35 var(--mono); opacity: 0; pointer-events: none; visibility: hidden; white-space: normal; transition: none; }
+.chart-tooltip-target:is(:hover, :focus-visible):not(:has(.chart-tooltip-target:is(:hover, :focus-visible)))::after { opacity: 1; transform: translate(-50%, 0); visibility: visible; }
+body:has(.chart-tooltip-target:hover) .chart-tooltip-target:focus-visible:not(:hover)::after { opacity: 0; visibility: hidden; }
+.chart-tooltip-target:focus-visible { z-index: 3; outline: 3px solid var(--coral); outline-offset: 2px; }
+.trend-average-guide { position: absolute; right: 0; left: 0; z-index: 2; border-top: 2px dashed var(--coral-dark); opacity: .78; pointer-events: none; }
 .trend-empty, .trend-null { background: repeating-linear-gradient(135deg, var(--line), var(--line) 4px, transparent 4px, transparent 8px); }
 .trend-zero { background: var(--coral); }
 .trend-coverage-note { margin: .45rem 0 0; color: var(--muted); font: .7rem var(--mono); }
-
+.sleep-trend-panel { border-top: 4px solid #315c78; }
+.sleep-trend-panel { --sleep-plot-height: 12rem; --sleep-bar-width: min(1.15rem, 42%); }
+.sleep-summary { display: flex; flex-wrap: wrap; gap: 1rem; color: var(--muted); font: .72rem var(--mono); }
+.sleep-summary strong { color: var(--ink); }
+.sleep-night { background: var(--sleep-night); }
+.sleep-duration-bar { display: flex; align-items: stretch; align-self: end; flex-direction: column; justify-content: flex-end; overflow: visible; min-height: .3rem; background: var(--sleep-night); }
+.sleep-composition-bar { display: flex; align-items: stretch; flex-direction: column; justify-content: flex-start; overflow: visible; }
+.sleep-segment { position: relative; display: block; min-width: 0; width: 100%; min-height: 0; }
+.sleep-day:nth-child(1 of .sleep-day) .sleep-segment::after { left: 0; transform: translate(0, .2rem); }
+.sleep-day:nth-child(1 of .sleep-day) .sleep-segment:is(:hover, :focus-visible)::after { transform: translate(0, 0); }
+.sleep-day:nth-last-child(1 of .sleep-day) .sleep-segment::after { right: 0; left: auto; transform: translate(0, .2rem); }
+.sleep-day:nth-last-child(1 of .sleep-day) .sleep-segment:is(:hover, :focus-visible)::after { transform: translate(0, 0); }
+.sleep-segment-night { background: var(--sleep-night); }
+.sleep-segment-awake { background: #f2a65a; }
+.sleep-segment-unclassified { background: repeating-linear-gradient(135deg, #8f978f, #8f978f 4px, #d9ddd7 4px, #d9ddd7 8px); }
+.sleep-event-awake { background: #f2a65a; }
+.sleep-segment-light, .sleep-event-light { background: #63b7af; }
+.sleep-segment-deep, .sleep-event-deep { background: #315c78; color: var(--paper-bright); }
+.sleep-segment-rem, .sleep-event-rem { background: #d9798c; }
+.sleep-event-sleeping { background: var(--sleep-night); }
+.sleep-event-in_bed { background: #d8caa8; }
+.sleep-event-unknown { background: repeating-linear-gradient(135deg, #bbb5a7, #bbb5a7 4px, #f8f3e6 4px, #f8f3e6 8px); }
+.sleep-mode-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; margin-top: 1rem; color: var(--muted); font: .68rem var(--mono); }
+.sleep-mode-button { min-height: 2.2rem; padding: .35rem .65rem; border: 1px solid var(--line-dark); background: var(--paper-bright); color: var(--ink-soft); font: 700 .68rem var(--mono); }
+.sleep-mode-button:hover, .sleep-mode-button.is-selected { border-color: var(--ink); background: var(--ink); color: var(--paper-bright); }
+.sleep-range-note { margin: 1rem 0 0; color: var(--muted); font: .68rem var(--mono); }
+.sleep-visual { position: relative; margin-top: 1.2rem; padding-left: 3.9rem; }
+.sleep-hour-axis { position: absolute; top: 0; left: 0; width: 3.5rem; height: var(--sleep-plot-height); color: var(--muted); font: .6rem var(--mono); }
+.sleep-hour-axis span { position: absolute; right: 0; transform: translateY(-50%); }
+.sleep-duration-axis { justify-content: space-between; }
+.sleep-average-guide { position: absolute; right: 0; left: 0; z-index: 2; border-top: 2px dashed var(--chart-guide); opacity: .78; pointer-events: none; }
+.sleep-average-wake { border-color: var(--mint-deep); }
+.sleep-guide-legend { display: flex; flex-wrap: wrap; gap: .8rem 1.2rem; margin: .65rem 0 0 3.9rem; color: var(--muted); font: .65rem var(--mono); }
+.sleep-guide-key::before { content: ""; display: inline-block; width: 1.3rem; margin-right: .35rem; border-top: 2px dashed var(--coral-dark); vertical-align: middle; }
+.sleep-guide-key-wake::before, .sleep-guide-key-duration::before { border-top-color: var(--mint-deep); }
+.sleep-guide-warning { color: var(--coral-dark); }
+.sleep-plot { position: relative; display: flex; align-items: stretch; gap: clamp(.2rem, .8vw, .8rem); height: var(--sleep-plot-height); margin: 0; padding: 0 .5rem; border-bottom: 1px solid var(--line-dark); background: #f8f3e6; }
+.sleep-grid { position: absolute; inset: 0 .5rem; pointer-events: none; }
+.sleep-grid span { position: absolute; right: 0; left: 0; border-top: 1px solid rgba(154, 152, 143, .26); }
+.sleep-day { display: flex; min-width: 0; height: 100%; flex: 1 1 0; flex-direction: column; align-items: center; justify-content: end; }
+.sleep-day-plot { display: flex; align-items: end; justify-content: center; gap: .2rem; width: 100%; height: 100%; min-height: 0; position: relative; border-left: 1px solid rgba(154, 152, 143, .25); }
+.sleep-bar { width: var(--sleep-bar-width); min-height: .25rem; flex: 0 0 var(--sleep-bar-width); border: 1px solid var(--ink); background: var(--sleep-night); }
+.sleep-schedule-segments { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.sleep-schedule-segment { position: absolute; right: 0; left: 0; display: block; box-shadow: inset 0 -1px rgba(29, 37, 40, .4); pointer-events: auto; }
+.sleep-schedule .sleep-bar { position: absolute; bottom: auto; }
+.sleep-duration .sleep-bar { position: relative; }
+.sleep-bar.sleep-night { background: var(--sleep-night); }
+.sleep-bar.sleep-empty, .sleep-bar.sleep-null, .sleep-bar.sleep-inconclusive { height: 0 !important; min-height: 0; border-style: dashed; }
+.sleep-bar.sleep-empty, .sleep-bar.sleep-null { border-width: 0; }
+.sleep-bar:not(.sleep-bar-numeric):not(.sleep-empty):not(.sleep-null):not(.sleep-inconclusive) { min-height: .45rem; }
+.sleep-bar.sleep-zero { background: var(--coral); }
+.sleep-bar-numeric { cursor: help; }
+.sleep-duration-bar { border: 1px solid var(--ink); }
+.sleep-duration-bar:not(.sleep-bar-numeric):not(.sleep-inconclusive) { min-height: 0; border-width: 0; }
+.sleep-range-monthly { max-width: 100%; overflow-x: clip; }
+.sleep-label-row { display: flex; gap: clamp(.2rem, .8vw, .8rem); padding: .45rem .5rem 0; }
+.sleep-label-row .sleep-day-label { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--muted); font: .58rem var(--mono); text-align: center; text-overflow: clip; white-space: nowrap; }
+.sleep-accessible-list { display: grid; gap: .45rem; margin: 1rem 0 0; padding: 0; list-style: none; }
+.sleep-event-timeline { position: relative; min-width: 0; margin-top: 1rem; overflow: visible; }
+.sleep-event-track { display: flex; min-width: 0; overflow: visible; border: 1px solid var(--ink); background: #f8f3e6; }
+.sleep-event-timeline .sleep-event { position: relative; min-width: 0; min-height: 1.1rem; border-right: 1px solid rgba(29, 37, 40, .45); cursor: help; }
+.sleep-event-track .sleep-event:first-child::after { left: 0; transform: translate(0, .2rem); }
+.sleep-event-track .sleep-event:first-child:hover::after, .sleep-event-track .sleep-event:first-child:focus-visible::after { transform: translate(0, 0); }
+.sleep-event-track .sleep-event:last-child::after { right: 0; left: auto; transform: translate(0, .2rem); }
+.sleep-event-track .sleep-event:last-child:hover::after, .sleep-event-track .sleep-event:last-child:focus-visible::after { transform: translate(0, 0); }
+.sleep-event-nap { box-shadow: inset 0 -4px 0 var(--sleep-nap); }
+.sleep-accessible-list li { display: flex; flex-wrap: wrap; gap: .7rem; padding: .55rem .65rem; border: 1px solid var(--line); color: var(--muted); font: .66rem var(--mono); }
+.sleep-accessible-list strong { color: var(--ink); }
+.scope-note-inline { margin: 1rem 0 0; color: var(--muted); font: .68rem/1.45 var(--mono); }
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1585,8 +1658,22 @@ code {
     padding: 1rem;
   }
 
+  .sleep-trend-panel { --sleep-plot-height: 8.5rem; }
+
+  .trend-controls {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .trend-controls > input {
+    grid-column: 1 / -1;
+    min-width: 0;
+    width: 100%;
+  }
+
   .trend-quick-range {
     flex: 1 1 0;
+    min-height: 2.7rem;
     padding-inline: .25rem;
   }
 

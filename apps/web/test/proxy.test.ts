@@ -28,6 +28,8 @@ describe("development proxy boundary", () => {
     expect(isAllowlistedApiRoute("GET", "/api/v1/session")).toBe(true);
     expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/overview")).toBe(true);
     expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/activity-trend")).toBe(true);
+    expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/sleep-trend")).toBe(true);
+    expect(isAllowlistedApiRoute("POST", "/api/v1/me/verify/sleep-trend")).toBe(false);
     expect(isAllowlistedApiRoute("POST", "/api/v1/me/verify/activity-trend")).toBe(false);
     expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/sources")).toBe(true);
     expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/settings")).toBe(true);
@@ -35,5 +37,9 @@ describe("development proxy boundary", () => {
     expect(isAllowlistedApiRoute("POST", "/api/v1/me/verify/runs")).toBe(true);
     expect(isAllowlistedApiRoute("GET", "/api/v1/me/verify/runs/verify-demo-01")).toBe(true);
     expect(isAllowlistedApiRoute("GET", "/api/v1/users/not-browser-data")).toBe(false);
+  });
+
+  it("does not classify Vite development tooling as an app API route", () => {
+    expect(isAllowlistedApiRoute("GET", "/@vite/client")).toBe(false);
   });
 });

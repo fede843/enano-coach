@@ -20,7 +20,7 @@ from .config import Settings
 from .errors import BFFError, error_for
 from .models import CreateRunBody, ErrorBody
 from .serializers import serialize_error
-from .service import BFFService, validate_date, validate_timezone
+from .service import DEFAULT_TIMEZONE, BFFService, validate_date, validate_timezone
 from .session import OwnerContext
 from .store import ALLOWED_DOMAINS, VerificationRunStore
 
@@ -33,9 +33,9 @@ def _timezone_hint(request: Request) -> str:
         try:
             ZoneInfo(value)
         except (ZoneInfoNotFoundError, ValueError):
-            return "UTC"
+            return DEFAULT_TIMEZONE
         return value
-    return "UTC"
+    return DEFAULT_TIMEZONE
 
 
 def _request_error_payload(request: Request, error: BFFError) -> dict[str, Any]:
@@ -617,6 +617,29 @@ def create_app(
         )
         return JSONResponse(
             content=service.activity_trend(
+                logical_date=logical_date,
+                parsed_date=parsed_date,
+                timezone_name=timezone_name,
+                range_name="7d" if range is None else range,
+            )
+        )
+
+    @app.get("/api/v1/me/verify/sleep-trend")
+    async def get_sleep_trend(
+        request: Request,
+        date: str | None = Query(default=None),
+        timezone: str | None = Query(default=None),
+        range: str | None = Query(
+            default=None, pattern="^(daily|7d|monthly|180d|annual)$"
+        ),
+    ) -> JSONResponse:
+        service.require_active()
+        _reject_query_params(request, frozenset({"date", "timezone", "range"}))
+        logical_date, parsed_date, timezone_name = service.validate_context(
+            date, timezone
+        )
+        return JSONResponse(
+            content=service.sleep_trend(
                 logical_date=logical_date,
                 parsed_date=parsed_date,
                 timezone_name=timezone_name,

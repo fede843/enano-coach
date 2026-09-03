@@ -160,6 +160,35 @@ session except `GET /api/v1/session`. They are not a generic OW proxy.
 define `/verify/...` as a public BFF route or endpoint shorthand.
 
 `GET /api/v1/me/verify/activity-trend` accepts `range=daily|7d|monthly|180d|annual`.
+
+`GET /api/v1/me/verify/sleep-trend` uses the same range values. Its additive
+`data.intervals` field is present for `daily` when validated sleep chronology
+intervals exist; each item contains only UTC `start`/`end`, `category` from
+`sleeping|awake|light|deep|rem|in_bed|unknown`, and boolean `isNap`. The BFF
+rejects malformed, overlapping, out-of-session, or source-ambiguous interval
+sets as `inconclusive`; it never silently mixes them or publishes intervals
+from the remaining events after any event in the daily set fails validation.
+Intervals are a chronology channel independent from aggregate composition.
+Their light/deep/REM distribution may differ from the summary totals, and their
+specific-stage coverage may be lower, without rewriting or invalidating either
+channel. For every event that does publish intervals, the exact elapsed seconds
+of `sleeping`, `light`, `deep`, and `rem` together must still equal its declared
+`sleep_duration_seconds`; `awake`, `in_bed`, and `unknown` do not count. Invalid
+event bounds, overlap, contradictory ordering, aggregate overcoverage, or a
+sleep-duration mismatch fail closed: no intervals are published, affected point
+and stage metrics are `inconclusive`, and the response includes `INCONCLUSIVE`.
+No rounding tolerance is applied because the source contract declares integer
+seconds.
+
+A usable aggregate-only summary has totals but no chronology: `data.intervals`
+is empty, the aggregate point remains available, and the UI must not draw a
+timeline or manufacture a generic or specific stage interval. A nap without
+intervals likewise retains its nap duration without entering night-stage
+chronology. An incomplete page or contradictory event set leaves the timeline
+empty rather than publishing a trusted-looking subset.
+The field is empty for non-daily ranges. `averageBedtime`
+and `averageWakeTime` are nullable UTC timestamps produced from circular
+local-time averages, never naive timestamp averages.
 The selected `date` is the inclusive logical end date. `daily` returns one day;
 `7d` returns the seven inclusive daily dates; `monthly` uses the containing
 calendar month; `180d` covers the inclusive 180-day date window; and `annual`
@@ -170,6 +199,37 @@ first implementation retains daily points for `daily`, `7d`, and `monthly`, and
 uses calendar-month buckets for `180d` and `annual`; bucket labels are the first
 day of the calendar month. Totals and averages use observed numeric values only;
 missing, null, zero, partial, ambiguous, and inconclusive states remain distinct.
+Summary `awake_minutes`, `light_minutes`, `deep_minutes`, and `rem_minutes` are
+projected to the corresponding `*Seconds` metrics only when explicitly present;
+zero remains zero, null remains null, and absence remains unsupported. Specific
+stages are never derived from generic `sleeping`, session duration, or another
+stage. Each point may add `unclassifiedSeconds`, the exact non-negative remainder
+of `nightSleepSeconds - (lightSeconds + deepSeconds + remSeconds)`. It is never
+relabeled as generic or as a specific stage, and `awakeSeconds` is deliberately
+excluded from this arithmetic. Night and nap intervals retain `isNap`; nap
+stages do not enter the night-stage totals. Daily points feed observed-only
+totals and averages, while
+`180d` and `annual` retain the existing calendar-month buckets. Each sleep range
+aggregate includes `state: value|empty|source_ambiguous`. If more than one
+provider/source contributes to the range, all range totals, averages, and
+average bed/wake times are `null` with `source_ambiguous`; the individually
+attributed daily points remain available. Vertical composition bars use
+`awake`, explicit `unclassifiedSeconds`, `light`, `deep`, and `rem`; their
+time-in-bed composition denominator is `nightSleepSeconds + awakeSeconds`, while
+the sleep-duration metric and its remainder continue to exclude awake. This
+keeps awake visible without double counting it as sleep. The daily vertical bar
+uses the same aggregate composition as other ranges; only the separate
+horizontal timeline represents chronological transitions. A negative
+remainder makes the point and segmented duration bar `inconclusive` rather than
+clamped or rescaled.
+
+The sleep date and range controls stay mounted while a new selection loads. The
+result body uses `aria-busy="true"`, renders explicit pending copy, and hides the
+previous window's charts so stale health data is not presented under the new
+selection. Date, timezone, range, and domain are part of independent query keys;
+superseded responses cannot overwrite the latest selection. Empty, partial,
+unsupported, and inconclusive responses keep their usable controls and
+accessible state text.
 
 | Method | Route | Query/body | Result |
 |---|---|---|---|
@@ -261,10 +321,11 @@ display it in overview only as a state relative to `asOf`, with the
 `BODY_RELATIVE_TO_NOW` warning, or exclude it from a daily card. It must not
 present it as a measurement for the selected day.
 
-For sleep, `sleepDurationSeconds` represents time in intervals with the
-`sleeping` stage; it is not all time in bed. The synthetic `overview_mixed` case
-uses `25200` seconds and retains `recoveryScore: null` to test the `null` state
-without confusing it with an empty sleep session.
+For sleep, `sleepDurationSeconds` is canonical net sleep: generic `sleeping`
+plus explicit `light`, `deep`, and `rem` time. It excludes `awake`, `in_bed`,
+and `unknown`, so it is not all time in bed. The synthetic `overview_mixed`
+case uses `25200` seconds and retains `recoveryScore: null` to test the `null`
+state without confusing it with an empty sleep session.
 
 ### 3.3 Settings
 

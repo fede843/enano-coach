@@ -143,6 +143,11 @@ export type ActivityTrendRange = "daily" | "7d" | "monthly" | "180d" | "annual";
 export interface ActivityTrendMetric { unit: Exclude<MetricUnit, null>; totalObserved: number | null; averageObserved: number | null; observedDays: number; expectedDays: number }
 export interface ActivityTrendPointMetric { state: MetricState; value: number | null; unit: MetricUnit }
 export interface ActivityTrendData { logicalDate: string; range: ActivityTrendRange; bucketMode: "daily" | "calendar-month"; steps: ActivityTrendMetric; distanceMeters: ActivityTrendMetric; points: Array<{ date: string; steps: ActivityTrendPointMetric; distanceMeters: ActivityTrendPointMetric }> }
+export interface SleepTrendPoint { date: string; nightSleepSeconds: ActivityTrendPointMetric; napsSeconds: ActivityTrendPointMetric; unclassifiedSeconds?: ActivityTrendPointMetric; stages: Record<"awakeSeconds" | "lightSeconds" | "deepSeconds" | "remSeconds", ActivityTrendPointMetric>; bedtime: string | null; wakeTime: string | null }
+export type SleepIntervalCategory = "sleeping" | "awake" | "light" | "deep" | "rem" | "in_bed" | "unknown";
+export interface SleepInterval { start: string; end: string; category: SleepIntervalCategory; isNap: boolean }
+export interface SleepTrendMetric extends ActivityTrendMetric { state?: "value" | "empty" | "source_ambiguous" }
+export interface SleepTrendData { logicalDate: string; range: ActivityTrendRange; bucketMode: "daily" | "calendar-month"; nightSleepSeconds: SleepTrendMetric; napsSeconds: SleepTrendMetric; awakeSeconds: SleepTrendMetric; lightSeconds: SleepTrendMetric; deepSeconds: SleepTrendMetric; remSeconds: SleepTrendMetric; points: SleepTrendPoint[]; observedDays: number; averageBedtime?: string | null; averageWakeTime?: string | null; intervals?: SleepInterval[] }
 
 export interface RunCounts {
   recordsSeen: number | null;
@@ -234,5 +239,6 @@ export interface AppState {
   retryError: import("./api").ApiError | null;
   page: PageState;
   activityTrend?: PageState;
+  sleepTrend?: PageState;
   runs: RunsState;
 }

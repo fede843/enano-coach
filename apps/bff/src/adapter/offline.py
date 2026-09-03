@@ -437,7 +437,7 @@ _BFF_FIXTURE_CASE_BY_RESPONSE_CASE = {
 _OW_EXPECTED_RESULTS = {
     "match": "match",
     "summaries_data": "aggregate_inventory_without_pagination",
-    "events_sleep": "sleep_event_with_generic_stage",
+    "events_sleep": "sleep_event_with_specific_stages",
     "sync_stream": "sse_frames_not_pagination",
     "value_null": "null_not_zero",
     "is_daily_total_null": "unknown_daily_total_semantics",

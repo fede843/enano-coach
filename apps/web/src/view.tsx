@@ -1,4 +1,4 @@
-import type { FormEvent, MouseEvent, ReactElement } from "react";
+import { type FormEvent, type MouseEvent, type ReactElement } from "react";
 
 import { ApiError, ERROR_COPY } from "./api";
 import {
@@ -36,6 +36,7 @@ import type {
   Metric,
   OverviewData,
   ActivityTrendData,
+  SleepTrendData,
   ActivityTrendRange,
   RunItem,
   SettingsData,
@@ -70,9 +71,19 @@ export interface ViewActions {
   onAction(action: ViewAction): void;
   trendRange?: ActivityTrendRange;
   setTrendRange?(range: ActivityTrendRange): void;
+  setTrendDate?(date: string): void;
   shiftTrend?(direction: -1 | 1): void;
   trendRanges?: Array<{ value: ActivityTrendRange; label: string }>;
+  sleepRange?: ActivityTrendRange;
+  setSleepRange?(range: ActivityTrendRange): void;
+  shiftSleep?(direction: -1 | 1): void;
+  sleepDate?: string;
+  setSleepDate?(date: string): void;
+  sleepMode?: SleepDisplayMode;
+  setSleepMode?(mode: SleepDisplayMode): void;
 }
+
+export type SleepDisplayMode = "schedule" | "duration";
 
 function currentNav(routeName: AppState["route"]["name"]): string {
   if (routeName === "detail") {
@@ -354,9 +365,50 @@ export function trendMetricMaximum(points: ActivityTrendData["points"], metric: 
   }));
 }
 
-export function trendAxisTicks(maximum: number): number[] {
-  if (!Number.isFinite(maximum) || maximum <= 0) return [0, 0, 0];
-  return [maximum, maximum / 2, 0];
+type AxisScale = { maximum: number; ticks: number[] };
+
+function axisTicks(maximum: number, increment: number): number[] {
+  const intervalCount = Math.round(maximum / increment);
+  return Array.from({ length: intervalCount + 1 }, (_, index) => {
+    const value = maximum - index * increment;
+    return Number(value.toPrecision(12));
+  });
+}
+
+function niceAxisScale(maximum: number, minimumIncrement = 0): AxisScale {
+  if (!Number.isFinite(maximum) || maximum <= 0) return { maximum: 0, ticks: [0] };
+  const roughIncrement = maximum / 5;
+  const magnitude = 10 ** Math.floor(Math.log10(roughIncrement));
+  const normalized = roughIncrement / magnitude;
+  const multiplier = [1, 2, 2.5, 5, 10].find((candidate) => candidate >= normalized) || 10;
+  const increment = Math.max(minimumIncrement, multiplier * magnitude);
+  const axisMaximum = Math.ceil(maximum / increment) * increment;
+  if (!Number.isFinite(increment) || increment <= 0 || !Number.isFinite(axisMaximum)) {
+    return { maximum, ticks: [maximum, 0] };
+  }
+  return { maximum: axisMaximum, ticks: axisTicks(axisMaximum, increment) };
+}
+
+function trendMetricAxisScale(maximum: number, metric: "steps" | "distanceMeters"): AxisScale {
+  if (!Number.isFinite(maximum) || maximum <= 0) return { maximum: 0, ticks: [0] };
+  const increment = metric === "steps"
+    ? maximum <= 10_000 ? 2_000 : maximum <= 20_000 ? 4_000 : 5_000
+    : maximum <= 3_000 ? 500 : maximum <= 10_000 ? 1_000 : 2_000;
+  const axisMaximum = Math.ceil(maximum / increment) * increment;
+  const ticks = axisTicks(axisMaximum, increment);
+  return ticks.length <= 6 ? { maximum: axisMaximum, ticks } : niceAxisScale(maximum, 1);
+}
+
+export function trendMetricAxisMaximum(maximum: number, metric: "steps" | "distanceMeters"): number {
+  return trendMetricAxisScale(maximum, metric).maximum;
+}
+
+export function trendAxisTicks(maximum: number, metric?: "steps" | "distanceMeters"): number[] {
+  if (!metric) {
+    if (!Number.isFinite(maximum) || maximum <= 0) return [0, 0, 0];
+    return [maximum, maximum / 2, 0];
+  }
+  return trendMetricAxisScale(maximum, metric).ticks;
 }
 
 export function trendAxisTickLabel(value: number, metric: "steps" | "distanceMeters"): string {
@@ -379,7 +431,7 @@ export function trendGuidePosition(average: number | null, maximum: number | nul
 function trendAverageGuide(metric: ActivityTrendData["steps"], maximum: number): ReactElement | null {
   const position = trendGuidePosition(metric.averageObserved, maximum);
   if (position === null) return null;
-  return <div className="trend-average-guide" style={{ bottom: position }} aria-hidden="true" />;
+  return <div className="trend-average-guide" style={{ bottom: position }} aria-label="Promedio observado" data-testid="activity-average-guide" />;
 }
 
 export function trendMetricText(metric: ActivityTrendData["steps"], kind: "total" | "average"): string {
@@ -394,29 +446,358 @@ function trendAggregateText(metric: ActivityTrendData["steps"], kind: "total" | 
 
 function trendSeries(metric: ActivityTrendData["steps"], points: ActivityTrendData["points"], key: "steps" | "distanceMeters", label: string, unit: string, range: ActivityTrendRange | "calendar-month"): ReactElement {
   const maximum = trendMetricMaximum(points, key);
+  const axisMaximum = trendMetricAxisMaximum(maximum, key);
   const axisMetric = key === "steps" ? "steps" : "distanceMeters";
-  return <div className={`trend-series trend-${axisMetric}`}><div className="trend-bar-group-label">{label}</div><div className="trend-axis" aria-label={`Escala de ${label}`}>{trendAxisTicks(maximum).map((tick) => <span key={tick}>{trendAxisTickLabel(tick, axisMetric)}</span>)}</div><div className="trend-plot-area"><div className="trend-plot">{trendAverageGuide(metric, maximum)}{points.map((point) => { const tooltip = trendBarTitle(point, key, unit); const title = `${point.date} · ${tooltip}`; const isNumeric = point[key].value !== null && ["value", "partial", "zero"].includes(point[key].state); return <div className={`trend-bar trend-${point[key].state}${isNumeric ? " trend-bar-numeric" : ""}`} key={`${key}-${point.date}`} tabIndex={isNumeric ? 0 : undefined} title={title} data-tooltip={isNumeric ? tooltip : undefined} aria-label={`${point.date}: ${trendPointText(point[key].state, point[key].value, unit)}; estado ${safeStateCopy(point[key].state).label}`} style={{ height: trendBarHeight(point[key].state, point[key].value, maximum) }} />; })}</div><div className="trend-bar-labels" aria-hidden="true">{points.map((point) => <span key={`${key}-label-${point.date}`} title={point.date}>{formatTrendPointLabel(point.date, range)}</span>)}</div></div></div>;
+  const ticks = trendAxisTicks(maximum, axisMetric);
+  return <div className={`trend-series trend-${axisMetric}`} data-testid={`activity-trend-${axisMetric}`}><div className="trend-bar-group-label">{label}</div><div className="trend-axis" aria-label={`Escala de ${label}`}>{ticks.map((tick, index) => <span key={`${axisMetric}-tick-${index}`}>{trendAxisTickLabel(tick, axisMetric)}</span>)}</div><div className="trend-plot-area"><div className="trend-plot" style={{ "--trend-axis-maximum": axisMaximum, "--trend-grid-step": `${100 / Math.max(1, ticks.length - 1)}%` } as React.CSSProperties}>{trendAverageGuide(metric, axisMaximum)}{points.map((point) => { const tooltip = trendBarTitle(point, key, unit); const isNumeric = point[key].value !== null && ["value", "partial", "zero"].includes(point[key].state); return <div className={`trend-bar trend-${point[key].state}${isNumeric ? " trend-bar-numeric chart-tooltip-target" : ""}`} key={`${key}-${point.date}`} tabIndex={isNumeric ? 0 : undefined} data-tooltip={isNumeric ? tooltip : undefined} data-tooltip-primitive={isNumeric ? "chart" : undefined} data-tooltip-delay={isNumeric ? "immediate" : undefined} aria-label={`${point.date}: ${trendPointText(point[key].state, point[key].value, unit)}; estado ${safeStateCopy(point[key].state).label}`} style={{ height: trendBarHeight(point[key].state, point[key].value, axisMaximum) }} />; })}</div><div className="trend-bar-labels" aria-hidden="true">{points.map((point) => <span key={`${key}-label-${point.date}`}>{formatTrendPointLabel(point.date, range)}</span>)}</div></div></div>;
 }
 
 function trendBucketSummary(trend: ActivityTrendData): ReactElement {
   return <ul className="trend-bucket-summary" aria-label="Resumen accesible de buckets de actividad">{trend.points.map((point) => <li key={point.date}><strong>{formatTrendBucketLabel(point.date)}</strong><span className="visually-hidden"> ({point.date})</span><span>Pasos: {trendPointText(point.steps.state, point.steps.value, "pasos")}</span><span>Distancia: {trendPointText(point.distanceMeters.state, point.distanceMeters.value, "m")}</span></li>)}</ul>;
 }
 
+function sleepSeconds(metric: { state: string; value: number | null }): string {
+  const label = safeStateCopy(metric.state).label;
+  if (metric.value === null) return `${metric.state}/${label}`;
+  return `${Math.round(metric.value / 60)} min (${metric.state}/${label})`;
+}
+
+export function sleepDurationValue(value: number | null): string {
+  if (value === null) return "Sin medición";
+  const minutes = Math.max(0, Math.round(value / 60));
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`;
+}
+
+export const sleepValue = sleepDurationValue;
+
+export type SleepBarSegment = { kind: "night" | "awake" | "unclassified" | "light" | "deep" | "rem"; seconds: number };
+
+export function sleepDurationSegments(point: SleepTrendData["points"][number]): SleepBarSegment[] {
+  const segments: SleepBarSegment[] = [];
+  const metric = point.nightSleepSeconds;
+  if (metric.value !== null && ["value", "partial"].includes(metric.state) && metric.value > 0) {
+    segments.push({ kind: "night", seconds: metric.value });
+  }
+  return segments;
+}
+
+export function sleepStageSegments(point: SleepTrendData["points"][number], genericSeconds = 0): SleepBarSegment[] {
+  const segments: SleepBarSegment[] = [];
+  if (!point.stages) return [];
+  const specific = ([
+    ["light", point.stages.lightSeconds],
+    ["deep", point.stages.deepSeconds],
+    ["rem", point.stages.remSeconds]
+  ] as const).filter(([, metric]) => metric.value !== null && ["value", "partial", "zero"].includes(metric.state));
+  const specificTotal = specific.reduce((sum, [, stage]) => sum + (stage.value ?? 0), 0);
+  const explicitUnclassified = point.unclassifiedSeconds;
+  const unclassifiedSeconds = explicitUnclassified?.value !== null
+    && explicitUnclassified?.value !== undefined
+    && ["value", "partial", "zero"].includes(explicitUnclassified.state)
+    ? explicitUnclassified.value
+    : genericSeconds;
+  if (
+    point.nightSleepSeconds.value === null
+    || !["value", "partial", "zero"].includes(point.nightSleepSeconds.state)
+    || genericSeconds < 0
+    || unclassifiedSeconds < 0
+    || specificTotal + unclassifiedSeconds !== point.nightSleepSeconds.value
+  ) return [];
+  const awake = point.stages.awakeSeconds;
+  if (awake.value !== null && awake.value > 0 && ["value", "partial"].includes(awake.state)) {
+    segments.push({ kind: "awake", seconds: awake.value });
+  }
+  if (explicitUnclassified && unclassifiedSeconds > 0) segments.push({ kind: "unclassified", seconds: unclassifiedSeconds });
+  else if (genericSeconds > 0) segments.push({ kind: "night", seconds: genericSeconds });
+  for (const [kind, metric] of specific) {
+    if (metric.value !== null && metric.value > 0) segments.push({ kind, seconds: metric.value });
+  }
+  return segments;
+}
+
+function localHour(value: string | null, timezone: string): number | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  return Number.isFinite(hour) && Number.isFinite(minute) ? hour + minute / 60 : null;
+}
+
+export function formatSleepTime(value: string | null, timezone: string): string {
+  if (!value) return "Sin medición";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "Sin medición";
+  try {
+    return new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: timezone }).format(date);
+  } catch {
+    return "Sin medición";
+  }
+}
+
+export function sleepHourBounds(points: Array<{ bedtime: string | null; wakeTime: string | null }>, timezone: string): { min: number; max: number } | null {
+  const intervals = points.flatMap((point) => {
+    const start = localHour(point.bedtime, timezone);
+    const end = localHour(point.wakeTime, timezone);
+    const startInstant = point.bedtime ? Date.parse(point.bedtime) : NaN;
+    const endInstant = point.wakeTime ? Date.parse(point.wakeTime) : NaN;
+    if (start === null || end === null || !Number.isFinite(startInstant) || !Number.isFinite(endInstant) || endInstant <= startInstant) return [];
+    const normalizedStart = start < 12 ? start + 24 : start;
+    const duration = Math.min(24, (endInstant - startInstant) / 3_600_000);
+    return [{ start: normalizedStart, end: normalizedStart + duration }];
+  });
+  if (intervals.length === 0) return null;
+  const observedMin = Math.min(...intervals.map((interval) => interval.start));
+  const observedMax = Math.max(...intervals.map((interval) => interval.end));
+  let min = Math.floor(observedMin / 2) * 2 - 2;
+  let max = Math.ceil(observedMax / 2) * 2 + 2;
+  if (max - min > 24) {
+    min = Math.floor(observedMin / 2) * 2;
+    max = min + 24;
+    if (observedMax > max) {
+      max = Math.ceil(observedMax / 2) * 2;
+      min = max - 24;
+    }
+  }
+  return max - min <= 24 && observedMin >= min && observedMax <= max ? { min, max } : null;
+}
+
+export function sleepSchedulePosition(start: string | null, end: string | null, timezone: string, bounds = { min: 0, max: 48 }): { top: string; height: string } | null {
+  const startHour = localHour(start, timezone);
+  const endHour = localHour(end, timezone);
+  if (startHour === null || endHour === null || !start || !end) return null;
+  const startInstant = Date.parse(start);
+  const endInstant = Date.parse(end);
+  if (!Number.isFinite(startInstant) || !Number.isFinite(endInstant) || endInstant <= startInstant) return null;
+  const durationHours = Math.min(24, (endInstant - startInstant) / 3_600_000);
+  const visualStart = startHour < 12 ? startHour + 24 : startHour;
+  const visualEnd = visualStart + durationHours;
+  const span = Math.max(1, bounds.max - bounds.min);
+  if (visualStart < bounds.min || visualEnd > bounds.max) return null;
+  const top = 100 - ((visualEnd - bounds.min) / span) * 100;
+  const height = Math.max(2, ((visualEnd - visualStart) / span) * 100);
+  return { top: `${top}%`, height: `${height}%` };
+}
+
+export function sleepAxisTickPosition(value: number, bounds: { min: number; max: number }): string {
+  return `${100 - ((value - bounds.min) / Math.max(1, bounds.max - bounds.min)) * 100}%`;
+}
+
+export function sleepGuidePosition(value: number | null, fallback: number, bounds: { min: number; max: number }): string | null {
+  const rawHour = value ?? fallback;
+  const hour = rawHour < 14 ? rawHour + 24 : rawHour;
+  if (!Number.isFinite(hour) || hour < bounds.min || hour > bounds.max) return null;
+  return sleepAxisTickPosition(hour, bounds);
+}
+
+export function sleepHourTicks(bounds: { min: number; max: number }): number[] {
+  const ticks: number[] = [];
+  for (let value = bounds.min; value <= bounds.max; value += 2) {
+    ticks.unshift(value);
+  }
+  return ticks.length > 0 ? ticks : [bounds.max, bounds.min];
+}
+
+export function sleepDurationGuidePosition(average: number | null, maximum: number): string | null {
+  if (typeof average !== "number" || !Number.isFinite(average) || average < 0 || !Number.isFinite(maximum) || maximum <= 0) return null;
+  return `${Math.min(100, (average / maximum) * 100)}%`;
+}
+
+function sleepPointState(point: SleepTrendData["points"][number]): string {
+  return safeStateCopy(point.nightSleepSeconds.state).label;
+}
+
+function sleepTooltip(point: SleepTrendData["points"][number], timezone: string, kind: "Noche" | "Siesta"): string {
+  const start = kind === "Noche" ? point.bedtime : null;
+  const end = kind === "Noche" ? point.wakeTime : null;
+  const range = start && end ? `${formatTimestamp(start, timezone)} → ${formatTimestamp(end, timezone)}` : "Horario no disponible";
+  const metric = kind === "Noche" ? point.nightSleepSeconds : point.napsSeconds;
+  const tooltipState = safeStateCopy(metric.state).label;
+  return `${kind} · ${range} · Duración: ${sleepValue(metric.value)} · Estado: ${tooltipState}`;
+}
+
+function sleepHourAxis(bounds: { min: number; max: number } | null): ReactElement | null {
+  if (!bounds) return null;
+  const ticks = sleepHourTicks(bounds);
+  return <div className="sleep-hour-axis" aria-label="Escala de hora local">{ticks.map((value) => <span key={value} data-sleep-tick={value} style={{ top: sleepAxisTickPosition(value, bounds) }}>{`${String(Math.floor(value) % 24).padStart(2, "0")}:00`}</span>)}</div>;
+}
+
+function sleepGrid(ticks: number[], bounds: { min: number; max: number }): ReactElement {
+  return <div className="sleep-grid" aria-hidden="true">{ticks.map((tick) => <span key={`sleep-grid-${tick}`} data-sleep-tick={tick} style={{ top: sleepAxisTickPosition(tick, bounds) }} />)}</div>;
+}
+
+export function sleepDurationAxis(maximum: number): ReactElement {
+  const ticks = sleepDurationAxisTicks(maximum);
+  const bounds = { min: 0, max: Math.max(1, ticks[0] || maximum) };
+  return <div className="sleep-hour-axis sleep-duration-axis" aria-label="Escala de duración del sueño">{ticks.map((value, index) => <span key={`sleep-duration-tick-${index}`} data-sleep-tick={value} style={{ top: sleepAxisTickPosition(value, bounds) }}>{sleepDurationValue(value)}</span>)}</div>;
+}
+
+export function sleepDurationAxisTicks(maximum: number): number[] {
+  if (!Number.isFinite(maximum) || maximum <= 0) return [0];
+  const increment = 2 * 3600;
+  const axisMaximum = Math.ceil(maximum / increment) * increment;
+  const ticks = axisTicks(axisMaximum, increment);
+  if (ticks.length <= 6) return ticks;
+  return niceAxisScale(maximum / 3600).ticks.map((tick) => tick * 3600);
+}
+
+type SleepInterval = NonNullable<SleepTrendData["intervals"]>[number];
+
+const sleepSegmentLabels: Record<SleepBarSegment["kind"], string> = {
+  night: "Sueño genérico",
+  awake: "Despierto",
+  unclassified: "Sin clasificar",
+  light: "Ligero",
+  deep: "Profundo",
+  rem: "REM"
+};
+
+function sleepSegmentState(point: SleepTrendData["points"][number], kind: SleepBarSegment["kind"]): string {
+  if (kind === "awake") return point.stages.awakeSeconds.state;
+  if (kind === "unclassified") return point.unclassifiedSeconds?.state || point.nightSleepSeconds.state;
+  if (kind === "light") return point.stages.lightSeconds.state;
+  if (kind === "deep") return point.stages.deepSeconds.state;
+  if (kind === "rem") return point.stages.remSeconds.state;
+  return point.nightSleepSeconds.state;
+}
+
+function sleepCompositionSegments(point: SleepTrendData["points"][number], segments: SleepBarSegment[]): ReactElement[] {
+  return segments.map((segment, index) => {
+    const tooltip = `${sleepSegmentLabels[segment.kind]} · Duración: ${sleepValue(segment.seconds)} · Estado: ${safeStateCopy(sleepSegmentState(point, segment.kind)).label}`;
+    return <span className={`sleep-segment sleep-segment-${segment.kind} chart-tooltip-target`} key={segment.kind} tabIndex={0} data-tooltip={tooltip} data-tooltip-primitive="chart" data-tooltip-delay="immediate" data-stage-index={index} aria-label={tooltip} style={{ flex: `${segment.seconds} 1 0` }} />;
+  });
+}
+
+const sleepIntervalLabels: Record<SleepInterval["category"], string> = {
+  sleeping: "Sueño genérico",
+  awake: "Despierto",
+  light: "Ligero",
+  deep: "Profundo",
+  rem: "REM",
+  in_bed: "En cama",
+  unknown: "Desconocido"
+};
+
+function sleepIntervalTooltip(interval: SleepInterval, timezone: string): string {
+  const duration = Math.max(0, Date.parse(interval.end) - Date.parse(interval.start)) / 1000;
+  return `${sleepIntervalLabels[interval.category]} · ${formatTimestamp(interval.start, timezone)} → ${formatTimestamp(interval.end, timezone)} · Duración: ${sleepValue(duration)}${interval.isNap ? " · Siesta" : ""}`;
+}
+
+function sleepBar(point: SleepTrendData["points"][number], timezone: string, kind: "Noche" | "Siesta", mode: SleepDisplayMode, max: number, bounds: { min: number; max: number } | null, intervals: SleepInterval[] = [], compositionOnly = false): ReactElement {
+  const metric = kind === "Noche" ? point.nightSleepSeconds : point.napsSeconds;
+  const numeric = metric.value !== null && ["value", "partial", "zero"].includes(metric.state);
+  const schedule = kind === "Noche" && bounds ? sleepSchedulePosition(point.bedtime, point.wakeTime, timezone, bounds) : null;
+  const composition = kind === "Noche" ? sleepStageSegments(point) : [];
+  const durationHeight = numeric ? `${Math.max(2, ((metric.value || 0) / max) * 100)}%` : "0%";
+  const style = mode === "schedule" && schedule
+    ? schedule
+    : mode === "schedule" && kind === "Siesta"
+      ? { bottom: "0", height: durationHeight }
+      : { height: durationHeight };
+  const tooltip = sleepTooltip(point, timezone, kind);
+  const barClass = `trend-bar sleep-bar sleep-${kind === "Noche" ? "night" : "nap"} sleep-${metric.state}${numeric ? " trend-bar-numeric sleep-bar-numeric" : ""}${composition.length > 0 ? " sleep-composition-bar" : ""} chart-tooltip-target`;
+  return <div className={barClass} style={style} tabIndex={0} data-tooltip={tooltip} data-tooltip-primitive="chart" data-tooltip-delay="immediate" data-stage-orientation={composition.length > 0 ? "composition-only" : undefined} aria-label={tooltip}>{composition.length > 0 ? sleepCompositionSegments(point, composition) : null}</div>;
+}
+
+function sleepDurationBar(point: SleepTrendData["points"][number], timezone: string, max: number, genericSeconds = 0): ReactElement {
+  const segments = sleepStageSegments(point, genericSeconds);
+  const contradictory = point.nightSleepSeconds.value !== null
+    && ["value", "partial"].includes(point.nightSleepSeconds.state)
+    && point.nightSleepSeconds.value > 0
+    && segments.length === 0;
+  const tooltip = contradictory ? "Etapas inconclusas: la suma no coincide con la duración nocturna" : segments.map((segment) => `${sleepSegmentLabels[segment.kind]}: ${sleepValue(segment.seconds)}`).join(" · ") || `Noche: ${sleepValue(point.nightSleepSeconds.value)}`;
+  const interactive = segments.length > 0 || contradictory;
+  return <div className={`trend-bar sleep-bar sleep-duration-bar sleep-${contradictory ? "inconclusive" : point.nightSleepSeconds.state}${segments.length > 0 ? " sleep-bar-numeric trend-bar-numeric" : ""}${interactive ? " chart-tooltip-target" : ""}`} tabIndex={interactive ? 0 : undefined} data-tooltip={interactive ? tooltip : undefined} data-tooltip-primitive={interactive ? "chart" : undefined} data-tooltip-delay={interactive ? "immediate" : undefined} data-stage-orientation="vertical-stack" aria-label={tooltip} style={{ height: sleepDurationBarHeight(segments, max) }}>
+    {sleepCompositionSegments(point, segments)}
+  </div>;
+}
+
+export function sleepDurationBarHeight(segments: SleepBarSegment[], max: number): string {
+  const night = segments.reduce((sum, segment) => sum + segment.seconds, 0);
+  return `${Math.min(100, (night / Math.max(1, max)) * 100)}%`;
+}
+
+export function sleepDurationMaximum(points: SleepTrendData["points"]): number {
+  return Math.max(1, ...points.map((point) => {
+    const segments = sleepStageSegments(point);
+    return segments.reduce((sum, segment) => sum + segment.seconds, 0);
+  }));
+}
+
+export function sleepNightDurationMaximum(points: SleepTrendData["points"]): number {
+  const maximum = Math.max(1, ...points.map((point) => {
+    const awake = point.stages?.awakeSeconds;
+    const awakeSeconds = awake?.value !== null && awake?.value !== undefined && ["value", "partial", "zero"].includes(awake.state) ? awake.value : 0;
+    return point.nightSleepSeconds.value !== null && ["value", "partial", "zero"].includes(point.nightSleepSeconds.state)
+      ? point.nightSleepSeconds.value + awakeSeconds
+      : 0;
+  }));
+  return sleepDurationAxisTicks(maximum)[0];
+}
+
+function sleepTrendControls(actions: ViewActions, logicalDate: string, range: ActivityTrendRange): ReactElement {
+  const selectedDate = actions.sleepDate || logicalDate;
+  const selectedRange = actions.sleepRange || range;
+  return <div className="trend-controls sleep-trend-controls" role="group" aria-labelledby="sleep-controls-title"><span id="sleep-controls-title" className="visually-hidden">Controles de ventana de sueño</span><label className="visually-hidden" htmlFor="sleep-date">Fecha de sueño</label><input data-testid="sleep-trend-date" id="sleep-date" name="sleep-date" autoComplete="off" type="date" value={selectedDate} onChange={(event) => actions.setSleepDate?.(event.target.value)} /><button data-testid="sleep-trend-previous" className="button button-secondary trend-arrow" type="button" aria-label="Ventana anterior de sueño" onClick={() => actions.shiftSleep?.(-1)}>←</button><div data-testid="sleep-trend-range" className="trend-quick-ranges" role="group" aria-label="Seleccionar ventana de sueño">{(actions.trendRanges || []).map((option) => <button className={`trend-quick-range${option.value === selectedRange ? " is-selected" : ""}`} type="button" key={option.value} aria-label={`Seleccionar ventana de sueño ${trendQuickLabel(option.value)}`} aria-pressed={option.value === selectedRange} onClick={() => actions.setSleepRange?.(option.value)}>{trendQuickLabel(option.value)}</button>)}</div><button data-testid="sleep-trend-next" className="button button-secondary trend-arrow" type="button" aria-label="Ventana siguiente de sueño" disabled={selectedDate >= new Date().toISOString().slice(0, 10)} onClick={() => actions.shiftSleep?.(1)}>→</button></div>;
+}
+
+function SleepTrendSection({ state, trend, actions }: { state: AppState; trend: SleepTrendData | null; actions: ViewActions }): ReactElement {
+  const status = state.sleepTrend?.status || "idle";
+  const selectedDate = actions.sleepDate || trend?.logicalDate || state.context.date;
+  const selectedRange = actions.sleepRange || trend?.range || "7d";
+  if (!trend) return <section className="trend-panel sleep-trend-panel" aria-labelledby="sleep-trend-title" data-testid="sleep-trend-panel">
+    <div className="section-heading"><div><p className="eyebrow">TENDENCIA DE SUEÑO</p><h2 id="sleep-trend-title">Sueño por ventana</h2><p className="trend-coverage-note" data-testid="sleep-trend-context">Fin lógico seleccionado: {selectedDate}.</p></div><span className="section-aside">{formatTrendRangeLabel(selectedRange)}</span></div>
+    {sleepTrendControls(actions, selectedDate, selectedRange)}
+    <div data-testid="sleep-trend-body" aria-busy={status === "loading"}>{status === "error" ? <p role="status">No se pudo cargar el sueño para la fecha y ventana seleccionadas; los controles siguen disponibles.</p> : <p role="status">Cargando sueño para la fecha y ventana seleccionadas…</p>}</div>
+  </section>;
+    const max = sleepNightDurationMaximum(trend.points);
+    const sleepRange = actions.sleepRange || trend.range;
+    const hourBounds = sleepHourBounds(trend.points, state.context.timezone) || (trend.averageBedtime || trend.averageWakeTime ? { min: 22, max: 36 } : null);
+    const bedtimeHour = localHour(trend.averageBedtime || null, state.context.timezone);
+    const wakeHour = localHour(trend.averageWakeTime || null, state.context.timezone);
+      const bedtimeGuide = !hourBounds || bedtimeHour === null ? null : sleepGuidePosition(bedtimeHour, hourBounds.min, hourBounds);
+      const wakeGuide = !hourBounds || wakeHour === null ? null : sleepGuidePosition(wakeHour, hourBounds.max, hourBounds);
+   const formatSleepTimeForContext = (value: string | null) => formatSleepTime(value, state.context.timezone);
+    const longRange = trend.bucketMode === "calendar-month";
+    const mode = actions.sleepMode || "schedule";
+    const effectiveMode = longRange ? "duration" : mode;
+    const hasNaps = trend.napsSeconds.observedDays > 0;
+     const hasSpecificStages = [trend.awakeSeconds, trend.lightSeconds, trend.deepSeconds, trend.remSeconds].some((aggregate) => aggregate.observedDays > 0);
+    const totalObserved = !hasNaps || trend.nightSleepSeconds.totalObserved === null || trend.napsSeconds.totalObserved === null ? null : trend.nightSleepSeconds.totalObserved + trend.napsSeconds.totalObserved;
+    const scheduleTicks = hourBounds ? sleepHourTicks(hourBounds) : [];
+    return <section className="trend-panel sleep-trend-panel" aria-labelledby="sleep-trend-title" data-testid="sleep-trend-panel">
+      <div className="section-heading"><div><p className="eyebrow">TENDENCIA DE SUEÑO</p><h2 id="sleep-trend-title">Sueño por ventana</h2><p className="trend-coverage-note" data-testid="sleep-trend-context">Fin lógico seleccionado: {trend.logicalDate}. {trend.observedDays === 0 ? "No hay datos de sueño para esta ventana." : `${trend.observedDays} días observados; las siestas se conservan separadas de la noche.`}</p></div><span className="section-aside">{formatTrendRangeLabel(trend.range)}</span></div>
+      {sleepTrendControls(actions, trend.logicalDate, sleepRange)}
+      <div data-testid="sleep-trend-body" aria-busy="false">
+      <div className="sleep-summary"><span>Promedio noche: <strong>{sleepDurationValue(trend.nightSleepSeconds.averageObserved)}</strong></span><span>Total noche: <strong>{sleepDurationValue(trend.nightSleepSeconds.totalObserved)}</strong></span>{trend.napsSeconds.totalObserved !== null ? <><span>Promedio siestas: <strong>{sleepDurationValue(trend.napsSeconds.averageObserved)}</strong></span><span>Total siestas: <strong>{sleepDurationValue(trend.napsSeconds.totalObserved)}</strong></span></> : null}{totalObserved !== null ? <span>Total combinado <small>(siestas observadas):</small> <strong>{sleepDurationValue(totalObserved)}</strong></span> : null}{trend.averageBedtime ? <span>Hora media de acostarse: <strong>{formatSleepTimeForContext(trend.averageBedtime)}</strong></span> : null}{trend.averageWakeTime ? <span>Hora media de despertarse: <strong>{formatSleepTimeForContext(trend.averageWakeTime)}</strong></span> : null}<span>Cobertura: <strong>{trend.nightSleepSeconds.observedDays} / {trend.nightSleepSeconds.expectedDays} días</strong></span></div>
+     {!longRange ? <div className="sleep-mode-controls" role="group" aria-label="Modo de visualización del sueño" data-testid="sleep-mode-toggle"><span>Mostrar como</span>{([ ["schedule", "Horario"], ["duration", "Duración"] ] as const).map(([value, label]) => <button key={value} className={`sleep-mode-button${effectiveMode === value ? " is-selected" : ""}`} type="button" aria-pressed={effectiveMode === value} onClick={() => actions.setSleepMode?.(value)}>{label}</button>)}</div> : <p className="sleep-range-note">Los rangos largos se resumen por mes para conservar la lectura.</p>}
+               <div className={`sleep-visual sleep-${effectiveMode} sleep-range-${trend.range}`} data-testid={`sleep-trend-${effectiveMode}-chart`} aria-label={effectiveMode === "schedule" ? "Barras de sueño por horario local" : longRange ? "Resumen mensual de duración del sueño" : "Barras de duración del sueño"}>{effectiveMode === "schedule" ? sleepHourAxis(hourBounds) : sleepDurationAxis(max)}<div className="sleep-plot">{effectiveMode === "schedule" ? (hourBounds ? sleepGrid(scheduleTicks, hourBounds) : null) : sleepGrid(sleepDurationAxisTicks(max), { min: 0, max })}{effectiveMode === "schedule" ? <>{bedtimeGuide ? <div className="sleep-average-guide sleep-average-bedtime" style={{ top: bedtimeGuide }} aria-label="Hora media de acostarse" data-testid="sleep-bedtime-guide" /> : null}{wakeGuide ? <div className="sleep-average-guide sleep-average-wake" style={{ top: wakeGuide }} aria-label="Hora media de despertarse" data-testid="sleep-wake-guide" /> : null}</> : effectiveMode === "duration" ? (() => { const position = sleepDurationGuidePosition(trend.nightSleepSeconds.averageObserved, max); return position ? <div className="sleep-average-guide sleep-average-duration" style={{ bottom: position }} aria-label="Promedio de duración de la noche" data-testid="sleep-average-guide" /> : null; })() : null}{trend.points.map((point) => { const genericSeconds = trend.range === "daily" ? (trend.intervals || []).filter((interval) => !interval.isNap && interval.category === "sleeping" && (!point.bedtime || Date.parse(interval.start) >= Date.parse(point.bedtime)) && (!point.wakeTime || Date.parse(interval.end) <= Date.parse(point.wakeTime))).reduce((total, interval) => total + (Date.parse(interval.end) - Date.parse(interval.start)) / 1000, 0) : 0; return <div className="sleep-day" key={point.date}><div className="sleep-day-plot">{effectiveMode === "duration" ? sleepDurationBar(point, state.context.timezone, max, genericSeconds) : sleepBar(point, state.context.timezone, "Noche", effectiveMode, max, hourBounds, trend.range === "daily" ? trend.intervals || [] : [], trend.range !== "daily")}</div></div>; })}</div><div className="sleep-label-row" aria-hidden="true">{trend.points.map((point) => <span className="sleep-day-label" key={`label-${point.date}`}>{formatTrendPointLabel(point.date, trend.bucketMode === "calendar-month" ? "calendar-month" : trend.range)}</span>)}</div></div>
+          {effectiveMode === "schedule" ? <div className="sleep-guide-legend">{bedtimeGuide ? <span className="sleep-guide-key sleep-guide-key-bedtime">Hora media de acostarse</span> : null}{wakeGuide ? <span className="sleep-guide-key sleep-guide-key-wake">Hora media de despertarse</span> : null}{trend.range !== "daily" && (!bedtimeGuide || !wakeGuide) ? <span className="sleep-guide-warning">Guías omitidas: promedios no comparables con esta ventana.</span> : null}</div> : <div className="sleep-guide-legend"><span className="sleep-guide-key sleep-guide-key-duration">Promedio noche: {sleepValue(trend.nightSleepSeconds.averageObserved)}</span><span className="sleep-guide-warning">La escala usa solo duración nocturna; las siestas no la cambian.</span></div>}
+          {trend.range === "daily" && trend.intervals?.length ? <div className="sleep-event-timeline" aria-label="Cronología de intervalos de sueño"><div className="sleep-event-track">{trend.intervals.map((interval, index) => { const tooltip = sleepIntervalTooltip(interval, state.context.timezone); return <span className={`sleep-event sleep-event-${interval.category}${interval.isNap ? " sleep-event-nap" : ""} chart-tooltip-target`} key={`${interval.start}-${interval.end}-${interval.category}-${interval.isNap ? "nap" : "night"}-${index}`} tabIndex={0} data-tooltip={tooltip} data-tooltip-primitive="chart" data-tooltip-delay="immediate" aria-label={tooltip} style={{ flex: `${Date.parse(interval.end) - Date.parse(interval.start)} 1 0` }} />; })}</div></div> : null}
+        <ul className="sleep-accessible-list visually-hidden" aria-label="Detalle accesible de sueño">{trend.points.map((point) => <li key={`sleep-${point.date}`}><strong>{point.date}</strong><span>Noche: {sleepValue(point.nightSleepSeconds.value)} · estado: {sleepPointState(point)}</span><span>Siestas: {sleepValue(point.napsSeconds.value)} · estado: {safeStateCopy(point.napsSeconds.state).label}</span>{!longRange ? <span>Horario local: {point.bedtime ? formatTimestamp(point.bedtime, state.context.timezone) : "Sin medición"} → {point.wakeTime ? formatTimestamp(point.wakeTime, state.context.timezone) : "Sin medición"}</span> : null}</li>)}</ul>
+       <p className="scope-note-inline">{hasSpecificStages ? "Solo se muestran etapas específicas observadas y validadas; el sueño genérico no se reparte entre etapas." : "La fuente solo publica sueño genérico o no publica etapas; no se infieren etapas específicas."}</p>
+      </div>
+  </section>;
+}
+
 function overviewPage(state: AppState, actions: ViewActions): ReactElement {
   const envelope = state.page.envelope as Envelope<OverviewData>;
   const data = envelope.data;
   const summary = data?.summary || {};
-  const trendPage = state.activityTrend || { status: "idle" as const, envelope: null, error: null };
-  const trend = trendPage.envelope?.data as ActivityTrendData | null;
+    const trendPage = state.activityTrend || { status: "idle" as const, envelope: null, error: null };
+    const trend = trendPage.envelope?.data as ActivityTrendData | null;
+    const sleepTrend = state.sleepTrend?.envelope?.data as SleepTrendData | null;
   const observedSummary = Object.values(summary).filter((metric) => metric.state !== "unsupported");
   const fieldCount = observedSummary.length;
   const isEmpty = fieldCount === 0 && envelope.coverage.availableDays === 0;
-    const trendContent = trend ? <section className="trend-panel" aria-labelledby="activity-trend-title">
+    const trendContent = trend ? <section className="trend-panel" aria-labelledby="activity-trend-title" data-testid="activity-trend-panel">
        <div className="section-heading"><div><p className="eyebrow">TENDENCIA DE ACTIVIDAD</p><h2 id="activity-trend-title">Actividad por ventana</h2><p className="trend-coverage-note">Fin lógico seleccionado: {trend.logicalDate}. {trend.steps.observedDays} de {trend.steps.expectedDays} días con pasos; los datos observados conservan su estado.</p></div><span className="section-aside">{formatTrendRangeLabel(trend.range)}</span></div>
-        <div className="trend-controls" aria-label="Controles de ventana de tendencia"><button className="button button-secondary trend-arrow" type="button" aria-label="Ventana anterior" onClick={() => actions.shiftTrend?.(-1)}>←</button><div className="trend-quick-ranges" role="group" aria-label="Seleccionar ventana">{(actions.trendRanges || [{ value: "7d", label: "7 días" }]).map((range) => <button className={`trend-quick-range${range.value === (actions.trendRange || "7d") ? " is-selected" : ""}`} type="button" key={range.value} aria-label={`Seleccionar ventana ${trendQuickLabel(range.value)}`} aria-current={range.value === (actions.trendRange || "7d") ? "true" : undefined} aria-pressed={range.value === (actions.trendRange || "7d")} onClick={() => actions.setTrendRange?.(range.value)}>{trendQuickLabel(range.value)}</button>)}</div><button className="button button-secondary trend-arrow" type="button" aria-label="Ventana siguiente" disabled={trend.logicalDate >= new Date().toISOString().slice(0, 10)} onClick={() => actions.shiftTrend?.(1)}>→</button></div>
+         <div className="trend-controls" aria-label="Controles de ventana de tendencia"><label className="visually-hidden" htmlFor="activity-date">Fecha de actividad</label><input id="activity-date" name="activity-date" type="date" autoComplete="off" value={trend.logicalDate} onChange={(event) => actions.setTrendDate?.(event.target.value)} /><button className="button button-secondary trend-arrow" type="button" aria-label="Ventana anterior" onClick={() => actions.shiftTrend?.(-1)}>←</button><div className="trend-quick-ranges" role="group" aria-label="Seleccionar ventana">{(actions.trendRanges || [{ value: "7d", label: "7 días" }]).map((range) => <button className={`trend-quick-range${range.value === (actions.trendRange || "7d") ? " is-selected" : ""}`} type="button" key={range.value} aria-label={`Seleccionar ventana ${trendQuickLabel(range.value)}`} aria-current={range.value === (actions.trendRange || "7d") ? "true" : undefined} aria-pressed={range.value === (actions.trendRange || "7d")} onClick={() => actions.setTrendRange?.(range.value)}>{trendQuickLabel(range.value)}</button>)}</div><button className="button button-secondary trend-arrow" type="button" aria-label="Ventana siguiente" disabled={trend.logicalDate >= new Date().toISOString().slice(0, 10)} onClick={() => actions.shiftTrend?.(1)}>→</button></div>
        <div className="trend-summary"><span>Total pasos: <strong>{trendAggregateText(trend.steps, "total", "")}</strong></span><span>Promedio pasos: <strong>{trendAggregateText(trend.steps, "average", "")}</strong></span><span>Total distancia: <strong>{trendAggregateText(trend.distanceMeters, "total", "m")}</strong></span><span>Promedio distancia: <strong>{trendAggregateText(trend.distanceMeters, "average", "m")}</strong></span><span>Cobertura: <strong>{trend.steps.observedDays} / {trend.steps.expectedDays} días</strong></span></div><div className="trend-legend" aria-label="Leyenda de la tendencia"><span><i className="trend-legend-line" aria-hidden="true" /> Promedio observado</span><span><i className="trend-legend-absence" aria-hidden="true" /> Ausencia conservada en altura y estado</span></div>
        <p className="trend-bucket-label">{trend.bucketMode === "calendar-month" ? "Resumen mensual: buckets por mes calendario" : "Buckets por día"}</p>
-        <div className="trend-bars" aria-label={`Series separadas de pasos y distancia por ${trend.bucketMode === "calendar-month" ? "mes" : "día"}`}>{trendSeries(trend.steps, trend.points, "steps", "Pasos", "pasos", trend.bucketMode === "calendar-month" ? "calendar-month" : trend.range)}{trendSeries(trend.distanceMeters, trend.points, "distanceMeters", "Distancia", "m", trend.bucketMode === "calendar-month" ? "calendar-month" : trend.range)}</div>
+         <div className="trend-bars" data-testid="activity-trend-charts" aria-label={`Series separadas de pasos y distancia por ${trend.bucketMode === "calendar-month" ? "mes" : "día"}`}>{trendSeries(trend.steps, trend.points, "steps", "Pasos", "pasos", trend.bucketMode === "calendar-month" ? "calendar-month" : trend.range)}{trendSeries(trend.distanceMeters, trend.points, "distanceMeters", "Distancia", "m", trend.bucketMode === "calendar-month" ? "calendar-month" : trend.range)}</div>
         {trend.bucketMode === "calendar-month" ? trendBucketSummary(trend) : null}
    </section> : null;
    return (
@@ -432,6 +813,7 @@ function overviewPage(state: AppState, actions: ViewActions): ReactElement {
         </section>
       )}
        {trendPage.status === "loading" ? <section className="trend-panel" aria-label="Tendencia de actividad" aria-busy="true">Cargando tendencia de actividad…</section> : trendPage.status === "error" ? <section className="trend-panel" role="status">No se pudo cargar la tendencia de actividad; el resumen diario sigue disponible.</section> : trendContent}
+         <SleepTrendSection state={state} trend={sleepTrend} actions={actions} />
        {warningsPanel(envelope.warnings)}
       {scopeNote(envelope)}
     </>

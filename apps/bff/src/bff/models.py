@@ -405,10 +405,29 @@ class TrendMetric(StrictModel):
             self.totalObserved is not None or self.averageObserved is not None
         ):
             raise ValueError("empty trend aggregate cannot have values")
-        if self.observedDays > 0 and (
-            self.totalObserved is None or self.averageObserved is None
+        if (
+            self.observedDays > 0
+            and getattr(self, "state", None) != "source_ambiguous"
+            and (self.totalObserved is None or self.averageObserved is None)
         ):
             raise ValueError("observed trend aggregate requires values")
+        return self
+
+
+class SleepTrendMetric(TrendMetric):
+    state: Literal["value", "empty", "source_ambiguous"] | None = None
+
+    @model_validator(mode="after")
+    def validate_sleep_aggregate_state(self) -> "SleepTrendMetric":
+        has_values = self.totalObserved is not None and self.averageObserved is not None
+        if self.state == "value" and not has_values:
+            raise ValueError("value sleep aggregate requires totals")
+        if self.state in {"empty", "source_ambiguous"} and has_values:
+            raise ValueError("non-value sleep aggregate cannot have totals")
+        if self.state is None and self.observedDays == 0:
+            self.state = "empty"
+        elif self.state is None:
+            self.state = "value"
         return self
 
 
@@ -419,12 +438,17 @@ class TrendPointMetric(StrictModel):
 
     @model_validator(mode="after")
     def validate_state_value_unit(self) -> "TrendPointMetric":
-        if self.state in {"empty", "null", "inconclusive"} and self.value is not None:
+        if (
+            self.state in {"empty", "null", "inconclusive", "unsupported"}
+            and self.value is not None
+        ):
             raise ValueError("non-value trend state cannot carry a value")
         if self.state == "zero" and self.value != 0:
             raise ValueError("zero trend state requires zero")
         if self.state in {"value", "partial"} and self.value is None:
             raise ValueError("observed trend state requires a value")
+        if self.state == "source_ambiguous" and self.value is not None:
+            raise ValueError("ambiguous trend state cannot carry a value")
         return self
 
 
@@ -441,6 +465,47 @@ class ActivityTrendData(StrictModel):
     distanceMeters: TrendMetric
     points: list[ActivityTrendPoint]
     bucketMode: Literal["daily", "calendar-month"]
+
+
+class SleepStagePoint(StrictModel):
+    awakeSeconds: TrendPointMetric
+    lightSeconds: TrendPointMetric
+    deepSeconds: TrendPointMetric
+    remSeconds: TrendPointMetric
+
+
+class SleepTrendPoint(StrictModel):
+    date: LogicalDate
+    nightSleepSeconds: TrendPointMetric
+    napsSeconds: TrendPointMetric
+    unclassifiedSeconds: TrendPointMetric
+    stages: SleepStagePoint
+    bedtime: Timestamp | None
+    wakeTime: Timestamp | None
+
+
+class SleepInterval(StrictModel):
+    start: Timestamp
+    end: Timestamp
+    category: Literal["sleeping", "awake", "light", "deep", "rem", "in_bed", "unknown"]
+    isNap: StrictBool
+
+
+class SleepTrendData(StrictModel):
+    logicalDate: LogicalDate
+    range: Literal["daily", "7d", "monthly", "180d", "annual"]
+    nightSleepSeconds: SleepTrendMetric
+    napsSeconds: SleepTrendMetric
+    awakeSeconds: SleepTrendMetric
+    lightSeconds: SleepTrendMetric
+    deepSeconds: SleepTrendMetric
+    remSeconds: SleepTrendMetric
+    points: list[SleepTrendPoint]
+    bucketMode: Literal["daily", "calendar-month"]
+    observedDays: StrictInt
+    averageBedtime: Timestamp | None = None
+    averageWakeTime: Timestamp | None = None
+    intervals: list[SleepInterval] = []
 
 
 class SessionData(StrictModel):

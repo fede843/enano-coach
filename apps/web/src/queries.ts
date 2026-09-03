@@ -11,6 +11,7 @@ import {
   createVerificationRun,
   getOverview,
   getActivityTrend,
+  getSleepTrend,
   getRunDetail,
   getRuns,
   getSession,
@@ -23,6 +24,7 @@ import type {
   Envelope,
   OverviewData,
   ActivityTrendData,
+  SleepTrendData,
   RunsPageData,
   SessionData,
   SettingsData,
@@ -36,6 +38,7 @@ export const queryKeys = Object.freeze({
   session: ["session"] as const,
   overview: (date: string, timezone: string) => ["verification-overview", date, timezone] as const,
   activityTrend: (date: string, timezone: string, range: string) => ["verification-activity-trend", date, timezone, range] as const,
+  sleepTrend: (date: string, timezone: string, range: string) => ["verification-sleep-trend", date, timezone, range] as const,
   sources: (date: string, timezone: string) => ["verification-sources", date, timezone] as const,
   settings: ["verification-settings"] as const,
   runs: (from: string, to: string, state: string, timezone: string) => ["verification-runs", from, to, state, timezone, RUN_LIMIT] as const,
@@ -75,7 +78,19 @@ export function useOverviewQuery(context: { date: string; timezone: string }, en
 }
 
 export function useActivityTrendQuery(context: { date: string; timezone: string; range: string }, enabled: boolean) {
-  return useQuery<Envelope<ActivityTrendData>, ApiError>({ queryKey: queryKeys.activityTrend(context.date, context.timezone, context.range), queryFn: ({ signal }) => getActivityTrend(context, { signal }), enabled });
+  return useQuery<Envelope<ActivityTrendData>, ApiError>({
+    queryKey: queryKeys.activityTrend(context.date, context.timezone, context.range),
+    queryFn: ({ queryKey, signal }) => getActivityTrend({ date: queryKey[1] as string, timezone: queryKey[2] as string, range: queryKey[3] as string }, { signal }),
+    enabled
+  });
+}
+
+export function useSleepTrendQuery(context: { date: string; timezone: string; range: string }, enabled: boolean) {
+  return useQuery<Envelope<SleepTrendData>, ApiError>({
+    queryKey: queryKeys.sleepTrend(context.date, context.timezone, context.range),
+    queryFn: ({ queryKey, signal }) => getSleepTrend({ date: queryKey[1] as string, timezone: queryKey[2] as string, range: queryKey[3] as string }, { signal }),
+    enabled
+  });
 }
 
 export function useSourcesQuery(context: { date: string; timezone: string }, enabled: boolean) {
